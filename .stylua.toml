@@ -1,0 +1,4 @@
+# Match the 2-space convention used across fibrous/weave (which predate this
+# file); stylua's default would be tabs.
+indent_type = "Spaces"
+indent_width = 2

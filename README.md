@@ -1,0 +1,46 @@
+# jotdown.nvim
+
+A Jupyter notebook frontend for Neovim, built on
+[fibrous](https://github.com/mbrea-c/fibrous.nvim). Early days: the transport
+skeleton exists; the notebook UI, protocol layer, and `.ipynb` round-trip are
+being built on top of it.
+
+## Architecture
+
+Jupyter separates frontend, middle layer, and kernel — the kernel never sees
+the notebook document, only code strings. jotdown is a frontend that speaks to
+the official middle layer, **Jupyter Server's REST + websocket API** (the same
+surface JupyterLab uses), so local and remote kernels are one code path:
+
+- **local**: jotdown spawns `jupyter server` itself and connects over
+  localhost with token auth;
+- **remote** (a GPU box, SageMaker, ...): same client pointed at a remote base
+  URL, credentials supplied by a pluggable auth provider. The `.ipynb` stays
+  local; only code goes up, mime bundles come back.
+
+Layers, top to bottom, with the two swap points marked:
+
+    fibrous document UI  (markdown cells, raw_buffer code cells, outputs)
+    notebook store       (cells, outputs, execution queue, kernel status)
+    kernel client        <- pluggable: scripted (tests/demo), server REST+WS,
+    |                       or e.g. a jupyter_client python sidecar
+    protocol layer       (Jupyter message envelopes, correlation, sessions)
+    wire transport       <- pluggable: curl+websocat (default), or a future
+    |                       pure-Lua vim.uv implementation
+    curl / websocat      (HTTP(S) / stdio<->wss bridge; dumb pipes)
+
+The **wire transport** (`lua/jotdown/transport/`) is the narrow interface —
+`request()` for HTTP, `ws_open()` for channels — with implementations
+registered by name. The default shells out to curl and websocat; the nix
+package pins both by store path (see `lua/jotdown/tools.lua`), so the packaged
+plugin never depends on `$PATH`.
+
+## Development
+
+    make test                       # full suite, working tree
+    make test-file FILE=tests/...  # one spec
+    nix flake check                 # the suite in the sandbox, pinned deps
+    nix develop                     # nvim, stylua, lua-ls, curl, websocat
+
+Tests run in a fully isolated headless Neovim (`-u NONE`); the harness is a
+small busted-flavored runner in `tests/harness.lua`.
