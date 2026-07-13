@@ -15,11 +15,14 @@ local config = {
   tools = {},
   -- mount the notebook UI automatically when a .ipynb file is opened
   auto_open = true,
+  -- every jotdown bind is a chord under this prefix
+  prefix = "<C-j>",
 }
 
 function M.setup(opts)
   config = vim.tbl_deep_extend("force", config, opts or {})
   require("jotdown.tools").configure(config.tools)
+  require("jotdown.view.notebook").configure({ prefix = config.prefix })
 
   local notebook_file = require("jotdown.notebook_file")
   notebook_file.setup_autocmds(config.auto_open)

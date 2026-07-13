@@ -190,6 +190,71 @@ describe("store execution", function()
   end)
 end)
 
+describe("store cell type", function()
+  it("flips code to markdown, clearing execution artifacts", function()
+    local st, client = new_pair()
+    local a = st:insert_cell(1, { type = "code", source = "x", meta = { id = "keep-me" } })
+    st:run_cell(a)
+    client:last().handlers.on_stream("stdout", "out\n")
+    client:last().handlers.on_done({ status = "ok", execution_count = 7 })
+
+    st:set_type(a, "markdown")
+    local cell = st:cell(a)
+    assert.equal("markdown", cell.type)
+    assert.equal("x", cell.source) -- source survives
+    assert.equal(0, #cell.outputs)
+    assert.is_nil(cell.execution_count)
+    assert.equal("idle", cell.state)
+    assert.equal("keep-me", cell.meta.id) -- ipynb identity survives
+  end)
+
+  it("flips markdown to code and bumps content_rev", function()
+    local st = new_pair()
+    local a = st:insert_cell(1, { type = "markdown", source = "# hi" })
+    local r0 = st.content_rev
+    st:set_type(a, "code")
+    assert.equal("code", st:cell(a).type)
+    assert.truthy(st.content_rev > r0)
+  end)
+
+  it("is a no-op for the same type or a running cell", function()
+    local st = new_pair()
+    local a = st:insert_cell(1, { type = "code", source = "x" })
+    local r0 = st.content_rev
+    st:set_type(a, "code")
+    assert.equal(r0, st.content_rev)
+
+    st:run_cell(a) -- fake client parks it: state stays running
+    st:set_type(a, "markdown")
+    assert.equal("code", st:cell(a).type)
+  end)
+
+  it("backs a queued cell out of the queue", function()
+    local st, client = new_pair()
+    local a = st:insert_cell(1, { type = "code", source = "a" })
+    local b = st:insert_cell(2, { type = "code", source = "b" })
+    st:run_cell(a)
+    st:run_cell(b) -- queued behind a
+    st:set_type(b, "markdown")
+    assert.equal("markdown", st:cell(b).type)
+    client:last().handlers.on_done({ status = "ok", execution_count = 1 })
+    assert.equal(1, #client.executions) -- b never dispatched
+  end)
+end)
+
+describe("store index", function()
+  it("returns a cell's 1-based position, nil when gone", function()
+    local st = new_pair()
+    local a = st:insert_cell(1, { type = "code", source = "a" })
+    local b = st:insert_cell(2, { type = "code", source = "b" })
+    assert.equal(1, st:index(a))
+    assert.equal(2, st:index(b))
+    st:delete_cell(a)
+    assert.equal(1, st:index(b))
+    assert.is_nil(st:index(a))
+  end)
+end)
+
 describe("store content_rev", function()
   it("bumps on content mutations but not on kernel status", function()
     local st, client = new_pair()

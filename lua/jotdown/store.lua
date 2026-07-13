@@ -91,6 +91,29 @@ function Store:cell(id)
   return cell
 end
 
+-- A cell's 1-based position in the document, or nil once deleted.
+function Store:index(id)
+  local i = self:_find(id)
+  return i
+end
+
+-- Retype a cell (code <-> markdown). Source and ipynb identity survive;
+-- execution artifacts don't (nbformat has no outputs on markdown cells, and a
+-- retyped code cell starts fresh). A running cell keeps its type until it
+-- settles; a queued one just backs out.
+function Store:set_type(id, type)
+  local _, cell = self:_find(id)
+  if not cell or cell.type == type or cell.state == "running" then
+    return
+  end
+  self:_unqueue(id)
+  cell.type = type
+  cell.state = "idle"
+  cell.outputs = {}
+  cell.execution_count = nil
+  self:_notify()
+end
+
 function Store:_find(id)
   for i, cell in ipairs(self.cells) do
     if cell.id == id then

@@ -52,13 +52,18 @@ trip, and raw-JSON edits win by re-parse on the way back up.
 
 ## UI plan (decided so far)
 
-- Keybinds: ONE prefix — `<C-j>` — and every jotdown bind is a chord under
-  it (`<C-j>r` run hovered cell, `<C-j>a` run all, `<C-j>i` interrupt, ...),
-  the weave `<leader><leader>` principle. Stock normal-mode `<C-j>` is
-  `<NL>`, a synonym for `j`, so nothing native is lost; the known conflict
-  is user window-nav maps on `<C-hjkl>`, and the prefix will be configurable
-  via setup(). Run-hovered works over the page (fibrous on_key routing) and
-  inside a focused cell buffer (buffer-local chord).
+- Keybinds: ONE prefix — `<C-j>`, configurable via `setup({ prefix = ... })`
+  — and every jotdown bind is a chord under it, the weave
+  `<leader><leader>` principle. Stock normal-mode `<C-j>` is `<NL>`, a
+  synonym for `j`, so nothing native is lost; the known conflict is user
+  window-nav maps on `<C-hjkl>`. Per-cell chords work over the page
+  (fibrous on_key routing) and inside a focused cell buffer (buffer-local;
+  management chords Esc-pop to the page first):
+  `<C-j>r` run hovered cell · `<C-j><CR>` run and advance (appends a cell
+  when there is no next one; on markdown, just advances) · `<C-j>o`/`<C-j>O`
+  add cell below/above · `<C-j>d` delete cell · `<C-j>J`/`<C-j>K` move cell
+  down/up · `<C-j>m` retype code<->markdown. Notebook-wide: `<C-j>a` run
+  all, `<C-j>i` interrupt, `<C-j>w` save, `<C-j>t` toggle raw ipynb.
 
 - Every cell — markdown AND code — is a fibrous subwindow with
   `render = "focus"`: unfocused it shows the painted mirror in the root
