@@ -116,6 +116,9 @@ local function mount(sess, cells)
   chord(sess.handle.bufnr, "i", function()
     sess.store:interrupt()
   end, "interrupt kernel")
+  chord(sess.handle.bufnr, "x", function()
+    sess.store:clear_all_outputs()
+  end, "clear all outputs")
   -- land the cursor IN the notebook: chords and cell navigation live on the
   -- view's buffer, not the covered file window
   sess.handle.focus()

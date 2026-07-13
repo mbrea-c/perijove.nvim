@@ -164,6 +164,43 @@ function Store:move_cell(id, delta)
 end
 
 ---------------------------------------------------------------------------
+-- Output management
+---------------------------------------------------------------------------
+
+-- Clear a cell's outputs and count (Jupyter's "clear output"). Not while
+-- running: the in-flight execution owns them.
+function Store:clear_outputs(id)
+  local _, cell = self:_find(id)
+  if not cell or cell.type ~= "code" or cell.state == "running" then
+    return
+  end
+  cell.outputs = {}
+  cell.execution_count = nil
+  cell.state = "idle"
+  touch(cell)
+  self:_notify()
+end
+
+function Store:clear_all_outputs()
+  for _, cell in ipairs(self.cells) do
+    if cell.type == "code" then
+      self:clear_outputs(cell.id)
+    end
+  end
+end
+
+-- Fold/unfold a cell's outputs in the view. Session state, not persisted.
+function Store:toggle_output(id)
+  local _, cell = self:_find(id)
+  if not cell or cell.type ~= "code" then
+    return
+  end
+  cell.collapsed = not cell.collapsed
+  touch(cell)
+  self:_notify()
+end
+
+---------------------------------------------------------------------------
 -- Execution: serial queue over client:execute
 ---------------------------------------------------------------------------
 

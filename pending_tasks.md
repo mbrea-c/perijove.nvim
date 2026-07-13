@@ -40,11 +40,15 @@ later scroll/flush repairs it.
 
 - [ ] ANSI escape parsing into real highlights (streams and tracebacks are
       stripped today).
-- [ ] Rich mime dispatch: text/markdown via ui.markdown, text/latex via the
-      fibrous math renderer, image/png (kitty graphics? degrade to an
-      "open externally" affordance first), text/html degrade to text.
-- [ ] Output management: collapse/clear a cell's output, clear all,
-      scroll-to-output on run.
+- [ ] Inline images: image/png / image/jpeg render as their text/plain repr
+      plus an honest label today — kitty graphics, or an "open externally"
+      affordance first.
+- [ ] text/html: degrades to text/plain today; a crude tag-strip fallback
+      for bundles that ship html only.
+- [ ] Persist output folds (`cell.collapsed` is session state; nbformat has
+      metadata.collapsed / jupyter.outputs_hidden).
+- [ ] Scroll-to-output on run (the jump machinery in view/notebook makes
+      this cheap now).
 
 ## Kernel UX
 

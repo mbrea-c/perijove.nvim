@@ -400,6 +400,49 @@ describe("view.notebook", function()
     handle.unmount()
   end)
 
+  it("dispatches rich output mimes: markdown, latex math, image placeholder", function()
+    local st, client = new_pair()
+    local a = st:insert_cell(1, { type = "code", source = "x" })
+    local handle = mount_nb(st)
+    st:run_cell(a)
+    local h = client:last().handlers
+    h.on_display({ ["text/markdown"] = "**BoldWord** plain tail" }, {})
+    h.on_display({ ["text/latex"] = "$\\alpha + \\beta$", ["text/plain"] = "<latex obj>" }, {})
+    h.on_display({ ["image/png"] = "aGVsbG8=", ["text/plain"] = "<Figure 640x480>" }, {})
+    h.on_done({ status = "ok", execution_count = 1 })
+    local text = text_of(handle.bufnr)
+    assert.truthy(text:find("BoldWord", 1, true)) -- markdown rendered
+    assert.falsy(text:find("%*%*BoldWord%*%*")) -- ...not shown raw
+    assert.truthy(text:find("α + β", 1, true)) -- latex through the math renderer
+    assert.truthy(text:find("<Figure 640x480>", 1, true)) -- image degrades to text/plain
+    assert.truthy(text:find("image/png", 1, true)) -- ...but says what it is
+    handle.unmount()
+  end)
+
+  it("folds and clears outputs with prefix-c / prefix-C", function()
+    local st, client = new_pair()
+    local a = st:insert_cell(1, { type = "code", source = "x = 1" })
+    local handle = mount_nb(st)
+    st:run_cell(a)
+    client:last().handlers.on_stream("stdout", "long output line\n")
+    client:last().handlers.on_done({ status = "ok", execution_count = 1 })
+    assert.truthy(text_of(handle.bufnr):find("long output line", 1, true))
+
+    press_at(handle, "x = 1", notebook.PREFIX .. "c")
+    local text = text_of(handle.bufnr)
+    assert.falsy(text:find("long output line", 1, true))
+    assert.truthy(text:find("output hidden", 1, true)) -- the fold marker
+    press_at(handle, "x = 1", notebook.PREFIX .. "c")
+    assert.truthy(text_of(handle.bufnr):find("long output line", 1, true))
+
+    press_at(handle, "x = 1", notebook.PREFIX .. "C")
+    text = text_of(handle.bufnr)
+    assert.falsy(text:find("long output line", 1, true))
+    assert.falsy(text:find("output hidden", 1, true)) -- gone, not folded
+    assert.truthy(text:find("In [ ]", 1, true)) -- count cleared too
+    handle.unmount()
+  end)
+
   it("memoizes cells: only the touched cell re-renders", function()
     local st, client = new_pair()
     local a = st:insert_cell(1, { type = "code", source = "x = 1" })

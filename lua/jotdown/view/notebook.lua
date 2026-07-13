@@ -27,8 +27,9 @@ local M = {}
 M.PREFIX = "<C-j>"
 
 -- The per-cell chord suffixes: run, run-and-advance, add below/above,
--- delete, retype, move down/up, edit (markdown split preview).
-local SUFFIXES = { "r", "<CR>", "o", "O", "d", "m", "J", "K", "e" }
+-- delete, retype, move down/up, edit (markdown split preview), fold
+-- outputs, clear outputs.
+local SUFFIXES = { "r", "<CR>", "o", "O", "d", "m", "J", "K", "e", "c", "C" }
 
 -- Keys the host mount must route to per-component on_key handlers (the
 -- `keys` mount option). Rebuilt by configure().
@@ -111,6 +112,30 @@ local function text_lines(text, hl)
   return children
 end
 
+-- A result/display mime bundle, best representation first: markdown and
+-- latex render rich (ui.markdown handles $...$ through the fibrous math
+-- renderer), images degrade to their text/plain repr plus an honest label
+-- (real image output is pending), anything else falls back to text/plain.
+local function mime_node(data)
+  if data["text/markdown"] then
+    return { comp = ui.markdown, props = { text = data["text/markdown"] } }
+  end
+  if data["text/latex"] then
+    return { comp = ui.markdown, props = { text = data["text/latex"] } }
+  end
+  local image = (data["image/png"] and "image/png") or (data["image/jpeg"] and "image/jpeg")
+  if image then
+    local children = text_lines(data["text/plain"] or "<image>")
+    children[#children + 1] = {
+      comp = ui.text,
+      props = { text = "(" .. image .. " output; inline images pending)", style = { text_hl = "Comment" } },
+    }
+    return { comp = ui.col, props = {}, children = children }
+  end
+  local text = data["text/plain"] or ("<" .. (next(data) or "empty") .. ">")
+  return { comp = ui.col, props = {}, children = text_lines(text) }
+end
+
 local function output_node(out)
   if out.kind == "stream" then
     return {
@@ -119,9 +144,7 @@ local function output_node(out)
       children = text_lines(out.text, out.name == "stderr" and "WarningMsg" or nil),
     }
   elseif out.kind == "result" or out.kind == "display" then
-    -- mime dispatch is a later milestone; text/plain is the universal floor
-    local text = out.data["text/plain"] or ("<" .. next(out.data) .. ">")
-    return { comp = ui.col, props = {}, children = text_lines(text) }
+    return mime_node(out.data)
   elseif out.kind == "error" then
     local children = text_lines(out.ename .. ": " .. out.evalue, "ErrorMsg")
     for _, line in ipairs(out.traceback) do
@@ -134,6 +157,15 @@ end
 local function outputs_node(cell)
   if #cell.outputs == 0 then
     return nil
+  end
+  if cell.collapsed then
+    return {
+      comp = ui.text,
+      props = {
+        text = ("· output hidden (%d)"):format(#cell.outputs),
+        style = { text_hl = "Comment", padding = { x = 1 } },
+      },
+    }
   end
   local children = {}
   for _, out in ipairs(cell.outputs) do
@@ -276,6 +308,12 @@ local function CodeCell(_, props)
   keys[M.PREFIX .. "<CR>"] = function()
     run()
     advance(store, cell)
+  end
+  keys[M.PREFIX .. "c"] = function()
+    store:toggle_output(cell.id)
+  end
+  keys[M.PREFIX .. "C"] = function()
+    store:clear_outputs(cell.id)
   end
   -- chords-from-inside: the root-buffer on_key routing below only covers the
   -- page; buffer-local chords make the same binds work while the cell's

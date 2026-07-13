@@ -63,8 +63,9 @@ trip, and raw-JSON edits win by re-parse on the way back up.
   when there is no next one; on markdown, just advances) · `<C-j>o`/`<C-j>O`
   add cell below/above · `<C-j>d` delete cell · `<C-j>J`/`<C-j>K` move cell
   down/up · `<C-j>m` retype code<->markdown · `<C-j>e` edit markdown in a
-  split preview. Notebook-wide: `<C-j>a` run all, `<C-j>i` interrupt,
-  `<C-j>w` save, `<C-j>t` toggle raw ipynb.
+  split preview · `<C-j>c` fold outputs · `<C-j>C` clear outputs.
+  Notebook-wide: `<C-j>a` run all, `<C-j>i` interrupt, `<C-j>x` clear all
+  outputs, `<C-j>w` save, `<C-j>t` toggle raw ipynb.
 
 - Code cells are fibrous subwindows with `render = "focus"`: unfocused you
   see the painted mirror in the root buffer, focusing (`<CR>`/click on the
