@@ -35,6 +35,17 @@ registered by name. The default shells out to curl and websocat; the nix
 package pins both by store path (see `lua/jotdown/tools.lua`), so the packaged
 plugin never depends on `$PATH`.
 
+## UI plan (decided so far)
+
+- Every cell — markdown AND code — is a fibrous subwindow with
+  `render = "focus"`: unfocused it shows the painted mirror in the root
+  buffer, focusing reveals the live float (fibrous's default subwin policy).
+- Markdown cell editing UX is TBD between (a) rendered when unfocused /
+  raw source while focused, and (b) split preview while focused (source
+  left, rendered right) / rendered only when unfocused. Currently leaning
+  (b); fibrous-docs' playground (`site/lua/webapp/playground.lua`, a
+  raw_buffer editor driving a live preview) is the prior art to build on.
+
 ## Development
 
     make test                       # full suite, working tree
