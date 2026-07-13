@@ -9,10 +9,12 @@ the architecture; this file records the working conventions.
   committing.
 - Red-green TDD: write the failing spec first, then the code. Run with
   `make test` (working tree) or `make test-file FILE=...` for one spec.
-  The suite must never touch the network or spawn servers — anything that
-  can be pure (argv construction, parsing, splitting) is a pure function
-  with unit specs; process/network glue stays thin and unexercised until
-  the integration-spec milestone.
+  Unit specs must never touch the network or spawn servers — anything that
+  can be pure (argv construction, parsing, correlation) is a pure function
+  or fake-driven with unit specs. The ONE exception is
+  tests/integration/real_kernel_spec.lua: loopback-only, real
+  jupyter-server + curl + websocat, and it skips itself (loudly) when
+  jupyter-server is not on PATH — `nix develop` provides it.
 - `make` may be missing from PATH in some sandboxes; the direct invocation is
   `nvim --headless -u NONE -i NONE -l tests/run.lua [spec]`.
 - fibrous during development comes from `FIBROUS_PATH` (defaults to the

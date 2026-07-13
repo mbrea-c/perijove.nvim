@@ -84,8 +84,9 @@
         }
       );
 
-      # `nix develop`: the test host plus the transport tools, so integration
-      # work against a live `jupyter server` has everything on hand.
+      # `nix develop`: the test host, the transport tools, and a real jupyter
+      # server + ipykernel so the integration spec runs (it skips itself when
+      # jupyter-server is missing).
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = [
@@ -95,13 +96,18 @@
             pkgs.stylua
             pkgs.curl
             pkgs.websocat
+            (pkgs.python3.withPackages (ps: [
+              ps.jupyter-server
+              ps.ipykernel
+            ]))
           ];
         };
       });
 
       # `nix flake check` runs the suite in the build sandbox, in a fully
-      # isolated headless Neovim, against the PINNED fibrous. curl/websocat
-      # are present for (future) transport integration specs.
+      # isolated headless Neovim, against the PINNED fibrous. The sandbox has
+      # loopback, so the real-kernel integration spec runs here too, against
+      # the pinned jupyter-server + ipykernel.
       checks = forAllSystems (pkgs: {
         tests =
           pkgs.runCommandLocal "jotdown-tests"
@@ -111,6 +117,10 @@
                 pkgs.gnumake
                 pkgs.curl
                 pkgs.websocat
+                (pkgs.python3.withPackages (ps: [
+                  ps.jupyter-server
+                  ps.ipykernel
+                ]))
               ];
             }
             ''

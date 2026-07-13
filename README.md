@@ -58,8 +58,13 @@ plugin never depends on `$PATH`.
 
     make test                       # full suite, working tree
     make test-file FILE=tests/...  # one spec
+    make demo                       # the notebook over the scripted kernel
     nix flake check                 # the suite in the sandbox, pinned deps
-    nix develop                     # nvim, stylua, lua-ls, curl, websocat
+    nix develop                     # nvim, stylua, lua-ls, curl, websocat,
+                                    # jupyter-server + ipykernel
 
 Tests run in a fully isolated headless Neovim (`-u NONE`); the harness is a
-small busted-flavored runner in `tests/harness.lua`.
+small busted-flavored runner in `tests/harness.lua`. Unit specs are hermetic
+(fakes all the way down); the one integration spec boots a REAL local
+jupyter server through the real curl+websocat transport, and skips itself
+when `jupyter-server` is not on PATH (`nix develop` provides it).

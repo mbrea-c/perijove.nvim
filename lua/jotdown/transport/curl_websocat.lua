@@ -56,13 +56,15 @@ function M.parse_curl_output(out)
 end
 
 -- Argv for one websocket channel: text mode (one line per ws message), stdio
--- on our end, exit when either side closes.
+-- on our end, exit when either side closes. Headers MUST use the -H= equals
+-- form: websocat's -H is multi-value, and the separate-argument form eats
+-- every following argument including the URL ("No URL specified").
 function M.ws_args(websocat, o)
   local args = { websocat, "-t", "--exit-on-eof" }
   local names = vim.tbl_keys(o.headers or {})
   table.sort(names)
   for _, name in ipairs(names) do
-    vim.list_extend(args, { "-H", ("%s: %s"):format(name, o.headers[name]) })
+    table.insert(args, ("-H=%s: %s"):format(name, o.headers[name]))
   end
   table.insert(args, o.url)
   return args

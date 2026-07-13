@@ -72,7 +72,7 @@ describe("curl_websocat", function()
   end)
 
   describe("ws_args", function()
-    it("builds a text-mode stdio bridge with headers", function()
+    it("builds a text-mode stdio bridge with headers in the = form", function()
       local args = cw.ws_args("websocat", {
         url = "ws://localhost:8888/api/kernels/k1/channels",
         headers = { ["Authorization"] = "token abc" },
@@ -80,7 +80,10 @@ describe("curl_websocat", function()
       assert.equal("websocat", args[1])
       local rendered = table.concat(args, " ")
       assert.truthy(rendered:find("-t", 1, true))
-      assert.truthy(rendered:find("-H Authorization: token abc", 1, true))
+      -- websocat's -H is multi-value: the separate-argument form eats every
+      -- following arg INCLUDING THE URL ("No URL specified"); only the
+      -- equals form is safe
+      assert.truthy(rendered:find("-H=Authorization: token abc", 1, true))
       assert.equal("ws://localhost:8888/api/kernels/k1/channels", args[#args])
     end)
   end)
