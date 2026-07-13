@@ -98,6 +98,11 @@ function Client:connect(cb)
         vim.notify("jotdown: kernel channel error: " .. tostring(err), vim.log.levels.WARN)
       end,
     })
+    -- a fresh kernel is idle; without this the store's status line reads
+    -- "unknown" until the first execute produces a real status message
+    if self._kernel_handlers.on_status then
+      self._kernel_handlers.on_status("idle")
+    end
     cb(nil)
   end)
 end

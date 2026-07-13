@@ -69,6 +69,9 @@ end
 ---------------------------------------------------------------------------
 
 local function text_lines(text, hl)
+  -- strip ANSI SGR sequences (ipykernel colors its tracebacks); parsing them
+  -- into real highlights is on pending_tasks.md
+  text = text:gsub("\27%[[%d;]*m", "")
   local children = {}
   for _, line in ipairs(vim.split(text:gsub("\n$", ""), "\n")) do
     children[#children + 1] = { comp = ui.text, props = { text = line, style = hl and { text_hl = hl } or nil } }

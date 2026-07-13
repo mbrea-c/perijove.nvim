@@ -87,6 +87,26 @@ describe("client.server connect", function()
     assert.equal("token sekrit", t.ws.opts.headers["Authorization"])
   end)
 
+  it("synthesizes an idle status on connect for an attached store", function()
+    local t = fake_transport({
+      ["POST " .. BASE .. "/api/sessions"] = {
+        status = 201,
+        body = { id = "sess-1", kernel = { id = "kern-1", name = "python3" } },
+      },
+    })
+    local c = server.new({ transport = t, base_url = BASE })
+    local statuses = {}
+    c:attach({
+      on_status = function(s)
+        table.insert(statuses, s)
+      end,
+    })
+    c:connect(function() end)
+    -- a fresh kernel is idle; without this the store shows "unknown" until
+    -- the first execute
+    assert.same({ "idle" }, statuses)
+  end)
+
   it("reports a failed session create through the callback", function()
     local t = fake_transport({}) -- no routes: everything fails
     local c = server.new({ transport = t, base_url = BASE })

@@ -25,6 +25,11 @@
         "aarch64-darwin"
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
+      # a real jupyter for the integration spec and the demo-real app
+      jupyterEnv = pkgs: pkgs.python3.withPackages (ps: [
+        ps.jupyter-server
+        ps.ipykernel
+      ]);
     in
     {
       # The plugin, packaged the standard nixpkgs way, with two twists:
@@ -60,26 +65,34 @@
       apps = forAllSystems (
         pkgs:
         let
-          app = name: text: {
+          app = name: extraInputs: text: {
             type = "app";
             program = pkgs.lib.getExe (
               pkgs.writeShellApplication {
                 inherit name text;
-                runtimeInputs = [ pkgs.neovim ];
+                runtimeInputs = [ pkgs.neovim ] ++ extraInputs;
               }
             );
           };
+          # the apps run from the source snapshot (tools.lua placeholders
+          # unsubstituted), so the transport tools must be on PATH
+          wireTools = pkgs: [ pkgs.curl pkgs.websocat ];
         in
         rec {
           default = demo;
-          test = app "jotdown-test" ''
+          test = app "jotdown-test" (wireTools pkgs ++ [ (jupyterEnv pkgs) ]) ''
             export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
             cd ${self}
             exec nvim --headless -u NONE -i NONE -l tests/run.lua "$@"
           '';
-          demo = app "jotdown-demo" ''
+          demo = app "jotdown-demo" [ ] ''
             export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
             exec nvim --clean -u ${self}/demo/init.lua
+          '';
+          # the same notebook over a REAL local jupyter kernel
+          demo-real = app "jotdown-demo-real" (wireTools pkgs ++ [ (jupyterEnv pkgs) ]) ''
+            export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
+            exec nvim --clean -u ${self}/demo/real.lua
           '';
         }
       );
@@ -96,10 +109,7 @@
             pkgs.stylua
             pkgs.curl
             pkgs.websocat
-            (pkgs.python3.withPackages (ps: [
-              ps.jupyter-server
-              ps.ipykernel
-            ]))
+            (jupyterEnv pkgs)
           ];
         };
       });
@@ -117,10 +127,7 @@
                 pkgs.gnumake
                 pkgs.curl
                 pkgs.websocat
-                (pkgs.python3.withPackages (ps: [
-                  ps.jupyter-server
-                  ps.ipykernel
-                ]))
+                (jupyterEnv pkgs)
               ];
             }
             ''

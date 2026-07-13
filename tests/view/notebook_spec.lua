@@ -99,6 +99,22 @@ describe("view.notebook", function()
     handle.unmount()
   end)
 
+  it("strips ANSI escapes from outputs (ipykernel colors its tracebacks)", function()
+    local st, client = new_pair()
+    local a = st:insert_cell(1, { type = "code", source = "x" })
+    local handle = mount_nb(st)
+    st:run_cell(a)
+    client:last().handlers.on_error("ValueError", "boom", {
+      "\27[0;31m---------------------------\27[0m",
+      "\27[0;31mValueError\27[0m: boom",
+    })
+    client:last().handlers.on_done({ status = "error", execution_count = 1 })
+    local text = text_of(handle.bufnr)
+    assert.falsy(text:find("\27", 1, true))
+    assert.truthy(text:find("ValueError: boom", 1, true))
+    handle.unmount()
+  end)
+
   it("tracks kernel status changes", function()
     local st, client = new_pair()
     st:insert_cell(1, { type = "code", source = "x" })

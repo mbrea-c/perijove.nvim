@@ -33,39 +33,10 @@ local nr = require("fibrous")
 local store = require("jotdown.store")
 local scripted = require("jotdown.client.scripted")
 local notebook = require("jotdown.view.notebook")
+local seed = require("demo.seed")
 
 local st = store.new(scripted.new())
-
-st:insert_cell(1, {
-  type = "markdown",
-  source = table.concat({
-    "# jotdown demo",
-    "",
-    "A notebook over the **scripted** kernel. Markdown cells render rich,",
-    "math included: $e^{i\\pi} + 1 = 0$, and display math too:",
-    "",
-    "$$",
-    "f'(x) = \\lim_{h \\to 0} \\frac{f(x + h) - f(x)}{h}",
-    "$$",
-    "",
-    "Code cells are real python buffers — enter one with `<CR>` or `i`,",
-    "edit it, step out with `hjkl` at the edge. Run the cell under the",
-    "cursor with `<C-j>r` (or its button); `<C-j>a` runs all,",
-    "`<C-j>i` interrupts, `<C-j>q` quits.",
-  }, "\n"),
-})
-st:insert_cell(2, {
-  type = "code",
-  source = 'greeting = "hello"\nprint(f"{greeting} from a code cell")',
-})
-st:insert_cell(3, {
-  type = "code",
-  source = "import time\ntime.sleep(60)  # interrupt me with I",
-})
-st:insert_cell(4, {
-  type = "code",
-  source = 'raise ValueError("this one fails")',
-})
+seed.fill(st)
 
 -- Over the current (only) window — a notebook is a document you open, not a
 -- popup. `keys` routes the run chord to the cell under the cursor.

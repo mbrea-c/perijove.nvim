@@ -23,3 +23,9 @@ test-file:
 .PHONY: demo
 demo:
 	$(NVIM_BIN) --clean -u demo/init.lua
+
+# The same notebook over a REAL local jupyter kernel (needs jupyter-server,
+# curl and websocat on PATH — `nix develop` provides them)
+.PHONY: demo-real
+demo-real:
+	$(NVIM_BIN) --clean -u demo/real.lua
