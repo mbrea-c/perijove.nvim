@@ -443,6 +443,38 @@ describe("view.notebook", function()
     handle.unmount()
   end)
 
+  it("prompts for stdin under the running cell and clears on answer", function()
+    local st, client = new_pair()
+    local a = st:insert_cell(1, { type = "code", source = "x = input()" })
+    local handle = mount_nb(st)
+    st:run_cell(a)
+    local answered
+    client:last().handlers.on_input("YourName:", false, function(text)
+      answered = text
+    end)
+    assert.truthy(text_of(handle.bufnr):find("YourName:", 1, true)) -- the prompt shows
+
+    st:answer_input("bob")
+    assert.equal("bob", answered)
+    vim.wait(50) -- the input widget's teardown restores its box on the loop
+    assert.falsy(text_of(handle.bufnr):find("YourName:", 1, true))
+    handle.unmount()
+  end)
+
+  it("shows how long the kernel has been busy", function()
+    local st, client = new_pair()
+    st:insert_cell(1, { type = "code", source = "x" })
+    local handle = mount_nb(st)
+    client:push_status("busy")
+    assert.truthy(text_of(handle.bufnr):find("kernel: busy", 1, true))
+    vim.wait(1300)
+    assert.truthy(text_of(handle.bufnr):find("busy · %d+s"))
+    client:push_status("idle")
+    assert.truthy(text_of(handle.bufnr):find("kernel: idle", 1, true))
+    assert.falsy(text_of(handle.bufnr):find("· %d+s"))
+    handle.unmount()
+  end)
+
   it("memoizes cells: only the touched cell re-renders", function()
     local st, client = new_pair()
     local a = st:insert_cell(1, { type = "code", source = "x = 1" })

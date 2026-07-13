@@ -52,9 +52,11 @@ later scroll/flush repairs it.
 
 ## Kernel UX
 
-- [ ] stdin (`input()`) prompts: on_input_request wired to a prompt UI.
-- [ ] Kernel status surfacing: busy-since timer, spinner, restart/shutdown
-      chords — matters for remote GPU boxes that bill while idle.
+- [ ] Password-style stdin (`getpass`): the prompt renders as a normal
+      text_input today; conceal the typed value when password = true.
+- [ ] A spinner / statusline integration beyond the busy-since timer.
+- [ ] Shutdown chord (restart is `<C-j>R`; shutdown currently rides
+      buffer close / VimLeave).
 
 ## Done (this file's graduates)
 

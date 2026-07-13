@@ -64,8 +64,13 @@ trip, and raw-JSON edits win by re-parse on the way back up.
   add cell below/above · `<C-j>d` delete cell · `<C-j>J`/`<C-j>K` move cell
   down/up · `<C-j>m` retype code<->markdown · `<C-j>e` edit markdown in a
   split preview · `<C-j>c` fold outputs · `<C-j>C` clear outputs.
-  Notebook-wide: `<C-j>a` run all, `<C-j>i` interrupt, `<C-j>x` clear all
-  outputs, `<C-j>w` save, `<C-j>t` toggle raw ipynb.
+  Notebook-wide: `<C-j>a` run all, `<C-j>i` interrupt, `<C-j>R` restart
+  kernel, `<C-j>x` clear all outputs, `<C-j>w` save, `<C-j>t` toggle raw
+  ipynb.
+
+- `input()` works: the kernel's stdin ask renders an inline prompt under
+  the running cell (a fibrous text_input; `<CR>` submits). The status line
+  shows how long the kernel has been busy.
 
 - Code cells are fibrous subwindows with `render = "focus"`: unfocused you
   see the painted mirror in the root buffer, focusing (`<CR>`/click on the

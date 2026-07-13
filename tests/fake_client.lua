@@ -9,6 +9,7 @@ function M.new()
   local c = {
     executions = {}, -- { code = ..., handlers = ... } in submission order
     interrupts = 0,
+    restarts = 0,
     kernel_handlers = nil, -- from attach()
   }
 
@@ -22,6 +23,13 @@ function M.new()
 
   function c:interrupt()
     self.interrupts = self.interrupts + 1
+  end
+
+  function c:restart(cb)
+    self.restarts = self.restarts + 1
+    if cb then
+      cb()
+    end
   end
 
   -- spec-side conveniences ------------------------------------------------

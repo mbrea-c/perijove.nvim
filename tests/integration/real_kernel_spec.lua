@@ -35,10 +35,15 @@ describe("integration: real kernel", function()
     assert.is_true(connected)
     assert.is_nil(connect_err)
 
-    -- one helper: run code, pump until on_done, return events
-    local function run(code)
+    -- one helper: run code, pump until on_done, return events. Any stdin
+    -- ask is answered through `answers` (prompt -> reply text).
+    local function run(code, answers)
       local events, done = {}, false
       client:execute(code, {
+        on_input = function(prompt, _, reply)
+          table.insert(events, { "input", prompt })
+          reply(answers and answers[prompt] or "")
+        end,
         on_stream = function(name, text)
           table.insert(events, { "stream", name, text })
         end,
@@ -88,6 +93,20 @@ describe("integration: real kernel", function()
       end
     end
     assert.equal("20", got)
+
+    -- input(): the kernel blocks in the stdin round trip and our reply
+    -- unblocks it — the answered value comes back as the result
+    local asked = run('name = input("who? ")\nf"hello {name}"', { ["who? "] = "manuel" })
+    local prompted, greeted = false, nil
+    for _, e in ipairs(asked) do
+      if e[1] == "input" then
+        prompted = e[2] == "who? "
+      elseif e[1] == "result" then
+        greeted = e[2]
+      end
+    end
+    assert.is_true(prompted)
+    assert.equal("'hello manuel'", greeted)
 
     -- an error travels the error path and still settles
     local failed = run('raise ValueError("boom")')

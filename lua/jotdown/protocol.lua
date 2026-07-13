@@ -49,7 +49,7 @@ function M.execute_content(code)
     silent = false,
     store_history = true,
     user_expressions = vim.empty_dict(),
-    allow_stdin = false, -- stdin support is a later milestone
+    allow_stdin = true, -- input_request routes through the correlator
     stop_on_error = true,
   }
 end
@@ -113,6 +113,10 @@ function Correlator:ingest(m)
     h.on_display(c.data, c.metadata)
   elseif msg_type == "error" then
     h.on_error(c.ename, c.evalue, c.traceback)
+  elseif msg_type == "input_request" then
+    -- stdin: the kernel is blocked in input() until an input_reply; the
+    -- reply plumbing is the client's business, we just route the ask
+    h.on_input(c.prompt, c.password)
   elseif msg_type == "execute_reply" then
     entry.reply = { status = c.status, execution_count = c.execution_count }
     maybe_finish(self, parent, entry)

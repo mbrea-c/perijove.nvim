@@ -9,7 +9,6 @@
 --   client:attach(handlers)
 --     Kernel-level events, wired once by the store:
 --       on_status(status)     "busy" | "idle" | "starting" | "dead" | ...
---       on_input_request(prompt, password, reply)   (later milestone)
 --
 --   client:execute(code, handlers)
 --     Run one code string. The client delivers, in kernel order:
@@ -17,6 +16,8 @@
 --       on_result(data, metadata)         execute_result mime bundle
 --       on_display(data, metadata)        display_data mime bundle
 --       on_error(ename, evalue, traceback)
+--       on_input(prompt, password, reply) stdin ask — the kernel is blocked
+--                                         in input() until reply(text)
 --       on_done(reply)                    exactly once, last:
 --                                         { status = "ok"|"error"|"aborted",
 --                                           execution_count = n }
@@ -25,8 +26,9 @@
 --
 --   client:interrupt()      best-effort; the running execute still settles
 --                           through its own on_error/on_done
---   client:restart(cb)      (later milestone)
---   client:shutdown(cb)     (later milestone)
+--   client:restart(cb)      the in-flight execute never settles; the store
+--                           backs its cells out locally
+--   client:shutdown(cb)
 --
 -- All callbacks arrive on the main loop.
 

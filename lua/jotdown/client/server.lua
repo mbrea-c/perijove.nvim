@@ -120,7 +120,23 @@ function Client:execute(code, handlers)
     session = self.session,
     channel = "shell",
   })
-  self._corr:track(env.header.msg_id, handlers)
+  -- stdin: the correlator routes the kernel's ask; the reply closure is
+  -- ours to provide — an input_reply frame back down the same channel
+  local tracked = handlers
+  if handlers.on_input then
+    tracked = setmetatable({
+      on_input = function(prompt, password)
+        handlers.on_input(prompt, password, function(text)
+          local reply = protocol.envelope("input_reply", { value = text }, {
+            session = self.session,
+            channel = "stdin",
+          })
+          self._conn.send(vim.json.encode(reply))
+        end)
+      end,
+    }, { __index = handlers })
+  end
+  self._corr:track(env.header.msg_id, tracked)
   self._conn.send(vim.json.encode(env))
 end
 
@@ -130,6 +146,18 @@ function Client:interrupt()
     url = self.base_url .. "/api/kernels/" .. self.kernel_id .. "/interrupt",
     headers = self:_headers(),
   }, function() end)
+end
+
+function Client:restart(cb)
+  self.transport:request({
+    method = "POST",
+    url = self.base_url .. "/api/kernels/" .. self.kernel_id .. "/restart",
+    headers = self:_headers(),
+  }, function()
+    if cb then
+      cb()
+    end
+  end)
 end
 
 function Client:shutdown(cb)

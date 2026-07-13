@@ -51,6 +51,7 @@ local function connected_client()
       },
     },
     ["POST " .. BASE .. "/api/kernels/kern-1/interrupt"] = { status = 204, body = vim.empty_dict() },
+    ["POST " .. BASE .. "/api/kernels/kern-1/restart"] = { status = 200, body = vim.empty_dict() },
   })
   local c = server.new({ transport = t, base_url = BASE, token = "sekrit" })
   local err
@@ -128,7 +129,30 @@ describe("client.server execute", function()
     assert.equal("shell", sent.channel)
     assert.equal("execute_request", sent.header.msg_type)
     assert.equal("print(1)", sent.content.code)
-    assert.is_false(sent.content.allow_stdin)
+    assert.is_true(sent.content.allow_stdin)
+  end)
+
+  it("answers an input_request through the stdin channel", function()
+    local c, t = connected_client()
+    local got
+    c:execute("input('Name: ')", {
+      on_input = function(prompt, password, reply)
+        got = { prompt = prompt, password = password, reply = reply }
+      end,
+      on_done = function() end,
+    })
+    local parent = vim.json.decode(t.ws.sent[1]).header.msg_id
+    t.ws.handlers.on_message(frame("stdin", "input_request", parent, { prompt = "Name: ", password = false }))
+    assert.is_not_nil(got)
+    assert.equal("Name: ", got.prompt)
+    assert.is_false(got.password)
+
+    got.reply("bob")
+    assert.equal(2, #t.ws.sent)
+    local sent = vim.json.decode(t.ws.sent[2])
+    assert.equal("stdin", sent.channel)
+    assert.equal("input_reply", sent.header.msg_type)
+    assert.equal("bob", sent.content.value)
   end)
 
   it("routes kernel replies back to the execution's handlers", function()
@@ -180,5 +204,15 @@ describe("client.server interrupt", function()
     local last = t.requests[#t.requests]
     assert.equal("POST", last.method)
     assert.equal(BASE .. "/api/kernels/kern-1/interrupt", last.url)
+  end)
+end)
+
+describe("client.server restart", function()
+  it("POSTs to the kernel's restart endpoint", function()
+    local c, t = connected_client()
+    c:restart()
+    local last = t.requests[#t.requests]
+    assert.equal("POST", last.method)
+    assert.equal(BASE .. "/api/kernels/kern-1/restart", last.url)
   end)
 end)

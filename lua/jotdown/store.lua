@@ -233,6 +233,55 @@ function Store:interrupt()
   self:_notify()
 end
 
+-- Restart the kernel: everything backs out NOW — a restarted kernel never
+-- answers the in-flight execute, so the running cell settles locally.
+function Store:restart()
+  self:_clear_queue()
+  if self._running then
+    local _, cell = self:_find(self._running)
+    if cell then
+      cell.state = "idle"
+      touch(cell)
+    end
+    self._running = nil
+  end
+  self:_drop_input()
+  if self.client.restart then
+    self.client:restart()
+  end
+  self:_notify(false)
+end
+
+---------------------------------------------------------------------------
+-- stdin: input() prompts
+---------------------------------------------------------------------------
+
+-- The one outstanding input request (the kernel blocks in input(), so there
+-- is never more than one): { cell_id, prompt, password, reply }.
+function Store:answer_input(text)
+  local pending = self.pending_input
+  if not pending then
+    return
+  end
+  self.pending_input = nil
+  pending.reply(text)
+  local _, cell = self:_find(pending.cell_id)
+  if cell then
+    touch(cell)
+  end
+  self:_notify(false)
+end
+
+function Store:_drop_input()
+  if self.pending_input then
+    local _, cell = self:_find(self.pending_input.cell_id)
+    if cell then
+      touch(cell)
+    end
+    self.pending_input = nil
+  end
+end
+
 function Store:_clear_queue()
   for _, id in ipairs(self._queue) do
     local _, cell = self:_find(id)
@@ -301,8 +350,23 @@ function Store:_exec_handlers(id)
     on_error = with_cell(function(cell, ename, evalue, traceback)
       table.insert(cell.outputs, { kind = "error", ename = ename, evalue = evalue, traceback = traceback })
     end),
+    on_input = function(prompt, password, reply)
+      local _, cell = self:_find(id)
+      if not cell then
+        -- cell deleted mid-run: unblock the kernel, nothing to show
+        reply("")
+        return
+      end
+      self.pending_input = { cell_id = id, prompt = prompt, password = password, reply = reply }
+      touch(cell)
+      self:_notify(false)
+    end,
     on_done = function(reply)
       self._running = nil
+      -- a settle abandons any prompt (interrupt while blocked in input())
+      if self.pending_input and self.pending_input.cell_id == id then
+        self:_drop_input()
+      end
       local _, cell = self:_find(id)
       if cell then
         cell.state = reply.status == "ok" and "ok" or "error"

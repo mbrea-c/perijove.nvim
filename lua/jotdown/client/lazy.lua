@@ -79,6 +79,14 @@ function Client:interrupt()
   end
 end
 
+function Client:restart(cb)
+  if self._real and self._real.restart then
+    self._real:restart(cb)
+  elseif cb then
+    cb()
+  end
+end
+
 function Client:shutdown(cb)
   if self._real and self._real.shutdown then
     self._real:shutdown(cb)

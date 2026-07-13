@@ -352,12 +352,39 @@ local function CodeCell(_, props)
     comp = ui.raw_buffer,
     props = { bufnr = buf, render = "focus", style = { border = true } },
   }
+  local children = { header, editor }
+  children[#children + 1] = outputs_node(cell)
+  -- stdin: the kernel is blocked in input() on THIS cell — prompt inline,
+  -- below the output printed so far, like Jupyter does
+  local pending = store.pending_input
+  if pending and pending.cell_id == cell.id then
+    children[#children + 1] = {
+      comp = ui.row,
+      props = { gap = 1, style = { padding = { x = 1 } } },
+      children = {
+        {
+          comp = ui.text,
+          props = { text = pending.prompt ~= "" and pending.prompt or "input:", style = { text_hl = "Question" } },
+        },
+        {
+          comp = ui.text_input,
+          props = {
+            width = 30,
+            clear_on_submit = true,
+            on_submit = function(value)
+              store:answer_input(value)
+            end,
+          },
+        },
+      },
+    }
+  end
   return {
     comp = ui.col,
     -- on_key fires for the component under the cursor: anywhere on this
     -- cell — header, mirror, outputs — the chords target THIS cell
     props = { gap = 0, on_key = keys },
-    children = { header, editor, outputs_node(cell) },
+    children = children,
   }
 end
 
@@ -538,10 +565,42 @@ function M.Notebook(ctx, props)
     end, {})
   end
 
+  -- busy-since ticker: while the kernel is busy a 1s timer re-renders the
+  -- status line with the elapsed time — matters on remote boxes that bill
+  -- while you stare at a spinner
+  local busy_since = ctx.use_ref(nil)
+  local tick = ctx.use_state(0)
+  ctx.use_effect(function()
+    if store.kernel_status ~= "busy" then
+      busy_since.current = nil
+      return
+    end
+    busy_since.current = vim.uv.now()
+    local timer = vim.uv.new_timer()
+    timer:start(
+      1000,
+      1000,
+      vim.schedule_wrap(function()
+        tick.set(tick.get() + 1)
+      end)
+    )
+    return function()
+      timer:stop()
+      timer:close()
+    end
+  end, { store.kernel_status })
+
+  local status = "kernel: " .. store.kernel_status
+  if store.kernel_status == "busy" and busy_since.current then
+    local secs = math.floor((vim.uv.now() - busy_since.current) / 1000)
+    if secs > 0 then
+      status = ("%s · %ds"):format(status, secs)
+    end
+  end
   local children = {
     {
       comp = ui.text,
-      props = { text = "kernel: " .. store.kernel_status, style = { text_hl = "Comment" } },
+      props = { text = status, style = { text_hl = "Comment" } },
     },
   }
   for _, cell in ipairs(store.cells) do

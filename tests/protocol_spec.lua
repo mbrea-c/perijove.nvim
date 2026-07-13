@@ -137,3 +137,27 @@ describe("protocol.correlator", function()
     assert.same({ "stream", "stdout", "for b" }, b[1])
   end)
 end)
+
+describe("protocol stdin", function()
+  it("allows stdin in execute requests (input() prompts are handled)", function()
+    assert.is_true(protocol.execute_content("input()").allow_stdin)
+  end)
+
+  it("routes input_request to the execution's on_input", function()
+    local corr = protocol.correlator({})
+    local prompts = {}
+    corr:track("e1", {
+      on_input = function(prompt, password)
+        table.insert(prompts, { prompt, password })
+      end,
+      on_done = function() end,
+    })
+    corr:ingest({
+      channel = "stdin",
+      header = { msg_id = "srv-9", msg_type = "input_request" },
+      parent_header = { msg_id = "e1" },
+      content = { prompt = "Name: ", password = false },
+    })
+    assert.same({ { "Name: ", false } }, prompts)
+  end)
+end)
