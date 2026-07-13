@@ -37,6 +37,14 @@ plugin never depends on `$PATH`.
 
 ## UI plan (decided so far)
 
+- Keybinds: ONE prefix — `<C-j>` — and every jotdown bind is a chord under
+  it (`<C-j>r` run hovered cell, `<C-j>a` run all, `<C-j>i` interrupt, ...),
+  the weave `<leader><leader>` principle. Stock normal-mode `<C-j>` is
+  `<NL>`, a synonym for `j`, so nothing native is lost; the known conflict
+  is user window-nav maps on `<C-hjkl>`, and the prefix will be configurable
+  via setup(). Run-hovered works over the page (fibrous on_key routing) and
+  inside a focused cell buffer (buffer-local chord).
+
 - Every cell — markdown AND code — is a fibrous subwindow with
   `render = "focus"`: unfocused it shows the painted mirror in the root
   buffer, focusing reveals the live float (fibrous's default subwin policy).

@@ -20,6 +20,16 @@ local ui = require("fibrous").ui
 
 local M = {}
 
+-- The keybind principle (see README): ONE prefix, every jotdown bind is a
+-- chord under it, nothing else is touched. Stock <C-j> in normal mode is
+-- <NL>, a synonym for `j` — free to steal. Will move to setup() config when
+-- the plugin grows a real entry point.
+M.PREFIX = "<C-j>"
+
+-- Keys the host mount must route to per-component on_key handlers (the
+-- `keys` mount option): run-hovered-cell.
+M.KEYS = { M.PREFIX .. "r" }
+
 local STATE_ICON = {
   idle = " ",
   queued = "…",
@@ -112,6 +122,13 @@ local function code_cell(store, slot, cell)
     store:set_source(cell.id, buf_text(buf))
     store:run_cell(cell.id)
   end
+  -- run-from-inside: the root-buffer on_key routing below only covers the
+  -- page; a buffer-local chord makes the same bind work while the cell's
+  -- float is focused (normal mode; leave insert-mode <C-j> alone)
+  if not slot.mapped[cell.id] then
+    slot.mapped[cell.id] = true
+    vim.keymap.set("n", M.PREFIX .. "r", run, { buffer = buf, desc = "jotdown: run this cell" })
+  end
   local header = {
     comp = ui.row,
     props = { gap = 1 },
@@ -126,7 +143,9 @@ local function code_cell(store, slot, cell)
   }
   return {
     comp = ui.col,
-    props = { gap = 0 },
+    -- on_key fires for the component under the cursor: anywhere on this
+    -- cell — header, mirror, outputs — the run chord runs THIS cell
+    props = { gap = 0, on_key = { [M.PREFIX .. "r"] = run } },
     children = { header, editor, outputs_node(cell) },
   }
 end
@@ -158,7 +177,7 @@ function M.Notebook(ctx, props)
   -- per-cell buffers live as long as the view; deleted with it
   local slot = ctx.use_ref(nil)
   if not slot.current then
-    slot.current = { bufs = {}, synced = {} }
+    slot.current = { bufs = {}, synced = {}, mapped = {} }
   end
   ctx.use_effect(function()
     return function()

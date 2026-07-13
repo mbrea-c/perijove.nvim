@@ -22,7 +22,30 @@ local function text_of(bufnr)
 end
 
 local function mount_nb(st)
-  return mount.floating(notebook.Notebook, { store = st }, { width = 60, height = 24, mode = "scroll" })
+  return mount.floating(
+    notebook.Notebook,
+    { store = st },
+    { width = 60, height = 24, mode = "scroll", keys = notebook.KEYS }
+  )
+end
+
+-- Find "needle" in the buffer; returns 1-based row and 0-based col.
+local function locate(bufnr, needle)
+  for i, l in ipairs(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)) do
+    local col = l:find(needle, 1, true)
+    if col then
+      return i, col - 1
+    end
+  end
+  error("not found in buffer: " .. needle)
+end
+
+local function press_at(handle, needle, key)
+  local row, col = locate(handle.bufnr, needle)
+  vim.api.nvim_set_current_win(handle.winid)
+  vim.api.nvim_win_set_cursor(handle.winid, { row, col })
+  vim.api.nvim_exec_autocmds("CursorMoved", { buffer = handle.bufnr })
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, false, true), "xt", false)
 end
 
 local function new_pair()
@@ -82,6 +105,24 @@ describe("view.notebook", function()
     local handle = mount_nb(st)
     client:push_status("busy")
     assert.truthy(text_of(handle.bufnr):find("kernel: busy", 1, true))
+    handle.unmount()
+  end)
+
+  it("runs the hovered cell on the prefix-r chord, syncing the buffer first", function()
+    local st, client = new_pair()
+    st:insert_cell(1, { type = "markdown", source = "prose here" })
+    local a = st:insert_cell(2, { type = "code", source = "x = 1" })
+    local handle = mount_nb(st)
+
+    -- over the markdown cell: nothing runs
+    press_at(handle, "prose here", notebook.PREFIX .. "r")
+    assert.equal(0, #client.executions)
+
+    -- over the code cell's mirror: the cell runs, with the buffer's text
+    press_at(handle, "x = 1", notebook.PREFIX .. "r")
+    assert.equal(1, #client.executions)
+    assert.equal("x = 1", client:last().code)
+    assert.equal("running", st:cell(a).state)
     handle.unmount()
   end)
 
