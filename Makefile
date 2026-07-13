@@ -18,3 +18,8 @@ test:
 .PHONY: test-file
 test-file:
 	$(NVIM_BIN) --headless -u NONE -i NONE -l tests/run.lua $(FILE)
+
+# The demo notebook (scripted kernel, no jupyter) in a clean interactive Neovim
+.PHONY: demo
+demo:
+	$(NVIM_BIN) --clean -u demo/init.lua

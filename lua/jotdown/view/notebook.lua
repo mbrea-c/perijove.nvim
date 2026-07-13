@@ -1,0 +1,192 @@
+-- The notebook view: a fibrous document projecting the store. First slice —
+-- kernel status line, markdown cells rendered rich (ui.markdown; the focused
+-- editing UX is TBD, see README), code cells as per-cell REAL buffers in
+-- render="focus" subwindows (unfocused you see the painted mirror, focusing
+-- reveals the live float with native filetype/undo), outputs beneath.
+--
+-- Source-of-truth rules for code text:
+--   - the store is authoritative when mutated through its API: a re-render
+--     writes cell.source into the cell's buffer iff it changed store-side
+--     since the last sync (tracked in `synced`), so user edits in the buffer
+--     are never clobbered by unrelated re-renders;
+--   - the buffer is authoritative at RUN time: run syncs buffer -> store
+--     before queueing, so you always execute what you see.
+--
+-- No memoization yet: every store notify re-renders the whole column. Fine
+-- for the demo scale; per-cell `memo = true` (the weave transcript pattern)
+-- is the planned fix when notebooks grow.
+
+local ui = require("fibrous").ui
+
+local M = {}
+
+local STATE_ICON = {
+  idle = " ",
+  queued = "…",
+  running = "▶",
+  ok = "✓",
+  error = "✗",
+}
+
+---------------------------------------------------------------------------
+-- Per-cell scratch buffers for code cells
+---------------------------------------------------------------------------
+
+-- Get-or-create the real buffer behind a code cell, honoring the sync rules
+-- above. `slot` is a use_ref payload: { bufs = {id -> bufnr}, synced = {id -> source} }.
+local function ensure_buf(slot, cell)
+  local buf = slot.bufs[cell.id]
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[buf].bufhidden = "hide"
+    vim.bo[buf].filetype = "python"
+    slot.bufs[cell.id] = buf
+    slot.synced[cell.id] = nil -- force the initial write below
+  end
+  if slot.synced[cell.id] ~= cell.source then
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(cell.source, "\n"))
+    slot.synced[cell.id] = cell.source
+  end
+  return buf
+end
+
+local function buf_text(buf)
+  return table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+end
+
+---------------------------------------------------------------------------
+-- Output rendering
+---------------------------------------------------------------------------
+
+local function text_lines(text, hl)
+  local children = {}
+  for _, line in ipairs(vim.split(text:gsub("\n$", ""), "\n")) do
+    children[#children + 1] = { comp = ui.text, props = { text = line, style = hl and { text_hl = hl } or nil } }
+  end
+  return children
+end
+
+local function output_node(out)
+  if out.kind == "stream" then
+    return {
+      comp = ui.col,
+      props = {},
+      children = text_lines(out.text, out.name == "stderr" and "WarningMsg" or nil),
+    }
+  elseif out.kind == "result" or out.kind == "display" then
+    -- mime dispatch is a later milestone; text/plain is the universal floor
+    local text = out.data["text/plain"] or ("<" .. next(out.data) .. ">")
+    return { comp = ui.col, props = {}, children = text_lines(text) }
+  elseif out.kind == "error" then
+    local children = text_lines(out.ename .. ": " .. out.evalue, "ErrorMsg")
+    for _, line in ipairs(out.traceback) do
+      vim.list_extend(children, text_lines(line, "ErrorMsg"))
+    end
+    return { comp = ui.col, props = {}, children = children }
+  end
+end
+
+local function outputs_node(cell)
+  if #cell.outputs == 0 then
+    return nil
+  end
+  local children = {}
+  for _, out in ipairs(cell.outputs) do
+    children[#children + 1] = output_node(out)
+  end
+  return {
+    comp = ui.col,
+    props = { style = { padding = { x = 1 } } },
+    children = children,
+  }
+end
+
+---------------------------------------------------------------------------
+-- Cells
+---------------------------------------------------------------------------
+
+local function code_cell(store, slot, cell)
+  local buf = ensure_buf(slot, cell)
+  local mark = cell.execution_count and ("In [" .. cell.execution_count .. "]") or "In [ ]"
+  local run = function()
+    store:set_source(cell.id, buf_text(buf))
+    store:run_cell(cell.id)
+  end
+  local header = {
+    comp = ui.row,
+    props = { gap = 1 },
+    children = {
+      { comp = ui.text, props = { text = mark .. " " .. STATE_ICON[cell.state], style = { text_hl = "Special" } } },
+      { comp = ui.button, props = { label = "run", on_press = run } },
+    },
+  }
+  local editor = {
+    comp = ui.raw_buffer,
+    props = { bufnr = buf, render = "focus", style = { border = true } },
+  }
+  return {
+    comp = ui.col,
+    props = { gap = 0 },
+    children = { header, editor, outputs_node(cell) },
+  }
+end
+
+local function markdown_cell(cell)
+  -- render="focus" subwindow editing for markdown is the TBD next step
+  -- (leaning split-preview, see README); until decided it renders rich, always
+  return {
+    comp = ui.markdown,
+    props = { text = cell.source },
+  }
+end
+
+---------------------------------------------------------------------------
+-- The document
+---------------------------------------------------------------------------
+
+function M.Notebook(ctx, props)
+  local store = props.store
+
+  -- re-render on every store notify
+  local tick = ctx.use_state(0)
+  ctx.use_effect(function()
+    return store:subscribe(function()
+      tick.set(tick.get() + 1)
+    end)
+  end, {})
+
+  -- per-cell buffers live as long as the view; deleted with it
+  local slot = ctx.use_ref(nil)
+  if not slot.current then
+    slot.current = { bufs = {}, synced = {} }
+  end
+  ctx.use_effect(function()
+    return function()
+      for _, buf in pairs(slot.current.bufs) do
+        pcall(vim.api.nvim_buf_delete, buf, { force = true })
+      end
+    end
+  end, {})
+
+  local children = {
+    {
+      comp = ui.text,
+      props = { text = "kernel: " .. store.kernel_status, style = { text_hl = "Comment" } },
+    },
+  }
+  for _, cell in ipairs(store.cells) do
+    if cell.type == "code" then
+      children[#children + 1] = code_cell(store, slot.current, cell)
+    else
+      children[#children + 1] = markdown_cell(cell)
+    end
+  end
+
+  return {
+    comp = ui.col,
+    props = { grow = 1, gap = 1, style = { padding = { x = 1 } } },
+    children = children,
+  }
+end
+
+return M
