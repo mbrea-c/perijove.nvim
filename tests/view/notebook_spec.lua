@@ -142,6 +142,42 @@ describe("view.notebook", function()
     handle.unmount()
   end)
 
+  it("publishes sync_to_store and makes cell buffers writeable when wired", function()
+    local st = new_pair()
+    local a = st:insert_cell(1, { type = "code", source = "before" })
+    local actions = { current = {} }
+    local writes = 0
+    local handle = mount.floating(notebook.Notebook, {
+      store = st,
+      actions = actions,
+      on_cell_write = function()
+        writes = writes + 1
+      end,
+    }, { width = 60, height = 24, mode = "scroll", keys = notebook.KEYS })
+
+    -- the cell buffer is a named acwrite buffer: :w works and routes to us
+    local cellbuf
+    for _, b in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_get_name(b):find("jotdown://", 1, true) then
+        cellbuf = b
+      end
+    end
+    assert.is_not_nil(cellbuf)
+    assert.equal("acwrite", vim.bo[cellbuf].buftype)
+
+    -- edit the buffer, sync: the store sees the new source
+    vim.api.nvim_buf_set_lines(cellbuf, 0, -1, false, { "after = 1" })
+    actions.current.sync_to_store()
+    assert.equal("after = 1", st:cell(a).source)
+
+    -- :w inside the cell buffer fires the notebook save hook
+    vim.api.nvim_buf_call(cellbuf, function()
+      vim.cmd("silent write")
+    end)
+    assert.equal(1, writes)
+    handle.unmount()
+  end)
+
   it("reflects source edits made through the store after a re-render", function()
     local st = new_pair()
     local a = st:insert_cell(1, { type = "code", source = "before" })

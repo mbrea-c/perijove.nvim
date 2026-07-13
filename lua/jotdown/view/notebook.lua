@@ -44,18 +44,32 @@ local STATE_ICON = {
 
 -- Get-or-create the real buffer behind a code cell, honoring the sync rules
 -- above. `slot` is a use_ref payload: { bufs = {id -> bufnr}, synced = {id -> source} }.
-local function ensure_buf(slot, cell)
+-- When the view is wired to a file (props.on_cell_write), cell buffers are
+-- NAMED acwrite buffers, so :w inside a focused cell routes to the notebook
+-- save instead of erroring on a nameless scratch buffer.
+local function ensure_buf(slot, cell, on_cell_write)
   local buf = slot.bufs[cell.id]
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
     buf = vim.api.nvim_create_buf(false, true)
     vim.bo[buf].bufhidden = "hide"
     vim.bo[buf].filetype = "python"
+    if on_cell_write then
+      vim.bo[buf].buftype = "acwrite"
+      vim.api.nvim_buf_set_name(buf, ("jotdown://%d/cell/%s"):format(buf, cell.id))
+      vim.api.nvim_create_autocmd("BufWriteCmd", {
+        buffer = buf,
+        callback = function()
+          on_cell_write()
+        end,
+      })
+    end
     slot.bufs[cell.id] = buf
     slot.synced[cell.id] = nil -- force the initial write below
   end
   if slot.synced[cell.id] ~= cell.source then
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(cell.source, "\n"))
     slot.synced[cell.id] = cell.source
+    vim.bo[buf].modified = false
   end
   return buf
 end
@@ -118,8 +132,8 @@ end
 -- Cells
 ---------------------------------------------------------------------------
 
-local function code_cell(store, slot, cell)
-  local buf = ensure_buf(slot, cell)
+local function code_cell(store, slot, cell, on_cell_write)
+  local buf = ensure_buf(slot, cell, on_cell_write)
   local mark = cell.execution_count and ("In [" .. cell.execution_count .. "]") or "In [ ]"
   local run = function()
     store:set_source(cell.id, buf_text(buf))
@@ -190,6 +204,36 @@ function M.Notebook(ctx, props)
     end
   end, {})
 
+  -- Publish the imperative surface the file layer needs (the weave counter
+  -- pattern: stable closures, published once). sync_to_store pulls every
+  -- cell buffer's text into the store — the save path calls it so you
+  -- always save what you see; each_cell_buf lets the saver clear modified
+  -- flags after a write.
+  if props.actions then
+    ctx.use_effect(function()
+      props.actions.current = {
+        sync_to_store = function()
+          for id, buf in pairs(slot.current.bufs) do
+            if vim.api.nvim_buf_is_valid(buf) and store:cell(id) then
+              local text = buf_text(buf)
+              if text ~= store:cell(id).source then
+                store:set_source(id, text)
+              end
+              slot.current.synced[id] = store:cell(id).source
+            end
+          end
+        end,
+        each_cell_buf = function(fn)
+          for _, buf in pairs(slot.current.bufs) do
+            if vim.api.nvim_buf_is_valid(buf) then
+              fn(buf)
+            end
+          end
+        end,
+      }
+    end, {})
+  end
+
   local children = {
     {
       comp = ui.text,
@@ -198,7 +242,7 @@ function M.Notebook(ctx, props)
   }
   for _, cell in ipairs(store.cells) do
     if cell.type == "code" then
-      children[#children + 1] = code_cell(store, slot.current, cell)
+      children[#children + 1] = code_cell(store, slot.current, cell, props.on_cell_write)
     else
       children[#children + 1] = markdown_cell(cell)
     end

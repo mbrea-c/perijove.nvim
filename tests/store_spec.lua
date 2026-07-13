@@ -24,6 +24,21 @@ describe("store cells", function()
     assert.equal("idle", st.cells[1].state)
   end)
 
+  it("carries ipynb bookkeeping through insert_cell (outputs, count, meta)", function()
+    local st = new_pair()
+    local a = st:insert_cell(1, {
+      type = "code",
+      source = "x",
+      execution_count = 4,
+      outputs = { { kind = "stream", name = "stdout", text = "old\n" } },
+      meta = { id = "code-1", metadata = { collapsed = true } },
+    })
+    local cell = st:cell(a)
+    assert.equal(4, cell.execution_count)
+    assert.equal("old\n", cell.outputs[1].text)
+    assert.equal("code-1", cell.meta.id)
+  end)
+
   it("looks up cells by id, edits source, deletes, and moves", function()
     local st = new_pair()
     local a = st:insert_cell(1, { type = "code", source = "one" })
@@ -172,6 +187,20 @@ describe("store execution", function()
     st:run_cell(a) -- already running: no double dispatch, no re-queue
     assert.equal(1, #client.executions)
     assert.equal("running", st:cell(a).state)
+  end)
+end)
+
+describe("store content_rev", function()
+  it("bumps on content mutations but not on kernel status", function()
+    local st, client = new_pair()
+    local r0 = st.content_rev
+    client:push_status("busy")
+    assert.equal(r0, st.content_rev) -- status is not document content
+    local a = st:insert_cell(1, { type = "code", source = "" })
+    assert.truthy(st.content_rev > r0)
+    local r1 = st.content_rev
+    st:set_source(a, "x")
+    assert.truthy(st.content_rev > r1)
   end)
 end)
 

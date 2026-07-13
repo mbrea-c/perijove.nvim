@@ -23,6 +23,9 @@ function M.new(client)
   local st = setmetatable({
     cells = {},
     kernel_status = "unknown",
+    -- bumped by DOCUMENT mutations only (cells, sources, outputs) — not by
+    -- kernel status — so save/dirty tracking keys off it
+    content_rev = 0,
     client = client,
     _next_id = 0,
     _queue = {}, -- cell ids waiting; head runs only after the current settles
@@ -32,7 +35,7 @@ function M.new(client)
   client:attach({
     on_status = function(status)
       st.kernel_status = status
-      st:_notify()
+      st:_notify(false)
     end,
   })
   return st
@@ -49,7 +52,12 @@ function Store:subscribe(fn)
   end
 end
 
-function Store:_notify()
+-- content defaults true: everything except kernel-status changes edits the
+-- document
+function Store:_notify(content)
+  if content ~= false then
+    self.content_rev = self.content_rev + 1
+  end
   for fn in pairs(self._subs) do
     fn()
   end
@@ -65,9 +73,12 @@ function Store:insert_cell(pos, spec)
     id = "c" .. self._next_id,
     type = spec.type or "code",
     source = spec.source or "",
-    outputs = {},
+    outputs = spec.outputs or {},
     state = "idle",
-    execution_count = nil,
+    execution_count = spec.execution_count,
+    -- ipynb bookkeeping (cell id, metadata, unknown fields) carried for the
+    -- save path; nil for cells born in the editor
+    meta = spec.meta,
   }
   table.insert(self.cells, pos, cell)
   self:_notify()

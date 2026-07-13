@@ -35,6 +35,21 @@ registered by name. The default shells out to curl and websocat; the nix
 package pins both by store path (see `lua/jotdown/tools.lua`), so the packaged
 plugin never depends on `$PATH`.
 
+## Using it
+
+`setup()` registers the entrypoints: opening a `.ipynb` mounts the notebook
+UI over that window (`auto_open = false` to opt out; `:Jotdown` opens or
+toggles by hand). The kernel is LAZY — nothing boots until the first run.
+
+Saving rides vim's own file semantics: `:w` — on the notebook, inside a
+focused cell buffer (they are named acwrite buffers), `:wa`, anything —
+syncs cell buffers into the store, serializes to nbformat (sorted keys,
+indent 1, ids/metadata/unknown fields preserved), and writes the file.
+Store changes set the file buffer's 'modified', so `:q` protection works
+unmodified. `<C-j>t` toggles down to the raw JSON (serialized fresh, never
+stale) and back; the store — outputs, kernel session — survives the round
+trip, and raw-JSON edits win by re-parse on the way back up.
+
 ## UI plan (decided so far)
 
 - Keybinds: ONE prefix — `<C-j>` — and every jotdown bind is a chord under

@@ -1,0 +1,240 @@
+-- The .ipynb (nbformat 4) round trip. Decode produces store-shaped cells
+-- plus preserved bookkeeping; encode rewrites ONLY what jotdown owns (cell
+-- sources, outputs, execution counts) and carries everything else through
+-- verbatim — cell ids, metadata, attachments, unknown fields, nbformat
+-- versions. Output style matches nbformat's own json.dumps(indent=1,
+-- sort_keys=True), so diffs against jupyter-touched files stay minimal.
+--
+-- Empty-container fidelity rides vim.json's decode tagging: empty JSON
+-- objects carry the vim.empty_dict() metatable, empty arrays stay plain
+-- tables, and the emitter below preserves the distinction.
+
+local M = {}
+
+---------------------------------------------------------------------------
+-- Canonical JSON (sorted keys, indent 1)
+---------------------------------------------------------------------------
+
+local empty_dict_mt = getmetatable(vim.empty_dict())
+
+local function is_empty_dict(t)
+  return getmetatable(t) == empty_dict_mt
+end
+
+local function to_json(v, depth)
+  if v == vim.NIL then
+    return "null"
+  end
+  if type(v) ~= "table" then
+    return vim.json.encode(v) -- scalars: numbers, booleans, escaped strings
+  end
+  local pad = (" "):rep(depth)
+  local inner = (" "):rep(depth + 1)
+  if next(v) == nil then
+    return is_empty_dict(v) and "{}" or "[]"
+  end
+  if vim.islist(v) then
+    local parts = {}
+    for _, item in ipairs(v) do
+      parts[#parts + 1] = inner .. to_json(item, depth + 1)
+    end
+    return "[\n" .. table.concat(parts, ",\n") .. "\n" .. pad .. "]"
+  end
+  local keys = vim.tbl_keys(v)
+  table.sort(keys)
+  local parts = {}
+  for _, k in ipairs(keys) do
+    parts[#parts + 1] = ("%s%s: %s"):format(inner, vim.json.encode(tostring(k)), to_json(v[k], depth + 1))
+  end
+  return "{\n" .. table.concat(parts, ",\n") .. "\n" .. pad .. "}"
+end
+
+function M.to_json(v)
+  return to_json(v, 0)
+end
+
+---------------------------------------------------------------------------
+-- Source and mime-bundle line conventions
+---------------------------------------------------------------------------
+
+-- nbformat stores multi-line text as a list of lines, each keeping its
+-- trailing newline; a bare string is also legal on the way in.
+local function join_lines(v)
+  if type(v) == "table" then
+    return table.concat(v)
+  end
+  return v or ""
+end
+
+local function split_lines(s)
+  if s == "" then
+    return {}
+  end
+  local lines = {}
+  local pieces = vim.split(s, "\n")
+  for i, piece in ipairs(pieces) do
+    lines[i] = i < #pieces and (piece .. "\n") or piece
+  end
+  -- a trailing newline leaves an empty last piece; drop it (its "\n" already
+  -- rides on the previous line)
+  if lines[#lines] == "" then
+    lines[#lines] = nil
+  end
+  return lines
+end
+
+-- mime bundles: text-typed values arrive as line lists; join for the store,
+-- split back on encode. Non-string payloads (application/json, ...) pass
+-- through untouched.
+local function join_mime(data)
+  local out = vim.empty_dict()
+  for mime, v in pairs(data or {}) do
+    if type(v) == "table" and (v[1] == nil or type(v[1]) == "string") and not is_empty_dict(v) then
+      out[mime] = join_lines(v)
+    else
+      out[mime] = v
+    end
+  end
+  return out
+end
+
+local function split_mime(data)
+  local out = vim.empty_dict()
+  for mime, v in pairs(data or {}) do
+    if type(v) == "string" then
+      out[mime] = split_lines(v)
+    else
+      out[mime] = v
+    end
+  end
+  return out
+end
+
+---------------------------------------------------------------------------
+-- Outputs: nbformat <-> the store's tagged kinds
+---------------------------------------------------------------------------
+
+local function decode_output(o)
+  if o.output_type == "stream" then
+    return { kind = "stream", name = o.name, text = join_lines(o.text) }
+  elseif o.output_type == "execute_result" then
+    return { kind = "result", data = join_mime(o.data), metadata = o.metadata }
+  elseif o.output_type == "display_data" then
+    return { kind = "display", data = join_mime(o.data), metadata = o.metadata }
+  elseif o.output_type == "error" then
+    return { kind = "error", ename = o.ename, evalue = o.evalue, traceback = o.traceback }
+  end
+  -- anything we don't model is carried through untouched
+  return { kind = "unknown", raw = o }
+end
+
+local function encode_output(out, execution_count)
+  if out.kind == "stream" then
+    return { output_type = "stream", name = out.name, text = split_lines(out.text) }
+  elseif out.kind == "result" then
+    return {
+      output_type = "execute_result",
+      data = split_mime(out.data),
+      metadata = out.metadata or vim.empty_dict(),
+      execution_count = execution_count or vim.NIL,
+    }
+  elseif out.kind == "display" then
+    return {
+      output_type = "display_data",
+      data = split_mime(out.data),
+      metadata = out.metadata or vim.empty_dict(),
+    }
+  elseif out.kind == "error" then
+    return {
+      output_type = "error",
+      ename = out.ename,
+      evalue = out.evalue,
+      traceback = out.traceback or {},
+    }
+  end
+  return out.raw
+end
+
+---------------------------------------------------------------------------
+-- The document
+---------------------------------------------------------------------------
+
+-- What jotdown owns per cell; everything else is bookkeeping to carry.
+local OWNED = { cell_type = true, source = true, outputs = true, execution_count = true }
+
+-- decode(text) -> { meta, cells }: meta is the top-level notebook table
+-- minus cells; each cell is store-shaped plus .meta (its unowned fields).
+function M.decode(text)
+  local nb = vim.json.decode(text, { luanil = { object = true, array = true } })
+  local cells = {}
+  for _, c in ipairs(nb.cells or {}) do
+    local meta = {}
+    for k, v in pairs(c) do
+      if not OWNED[k] then
+        meta[k] = v
+      end
+    end
+    local outputs = {}
+    for _, o in ipairs(c.outputs or {}) do
+      outputs[#outputs + 1] = decode_output(o)
+    end
+    cells[#cells + 1] = {
+      type = c.cell_type,
+      source = join_lines(c.source),
+      execution_count = c.execution_count,
+      outputs = outputs,
+      meta = meta,
+    }
+  end
+  local meta = {}
+  for k, v in pairs(nb) do
+    if k ~= "cells" then
+      meta[k] = v
+    end
+  end
+  return { meta = meta, cells = cells }
+end
+
+local id_counter = 0
+
+local function new_cell_id()
+  id_counter = id_counter + 1
+  return ("jd-%x-%d"):format(vim.uv.hrtime(), id_counter)
+end
+
+-- encode(meta, cells) -> nbformat JSON text. `cells` are store-shaped (the
+-- store's own bookkeeping like .id/.state is ignored; .meta is merged back).
+function M.encode(meta, cells)
+  local out_cells = {}
+  for _, cell in ipairs(cells) do
+    local c = {
+      cell_type = cell.type,
+      source = split_lines(cell.source or ""),
+    }
+    if cell.type == "code" then
+      c.execution_count = cell.execution_count or vim.NIL
+      c.outputs = {}
+      for _, o in ipairs(cell.outputs or {}) do
+        c.outputs[#c.outputs + 1] = encode_output(o, cell.execution_count)
+      end
+    end
+    for k, v in pairs(cell.meta or {}) do
+      c[k] = v
+    end
+    c.id = c.id or new_cell_id()
+    c.metadata = c.metadata or vim.empty_dict()
+    out_cells[#out_cells + 1] = c
+  end
+  local nb = { cells = out_cells }
+  for k, v in pairs(meta) do
+    nb[k] = v
+  end
+  return M.to_json(nb) .. "\n"
+end
+
+-- Top-level skeleton for a brand-new notebook.
+function M.new_meta()
+  return { metadata = vim.empty_dict(), nbformat = 4, nbformat_minor = 5 }
+end
+
+return M

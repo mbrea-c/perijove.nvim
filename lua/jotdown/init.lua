@@ -13,11 +13,25 @@ local config = {
   transport = nil,
   -- per-tool binary overrides, e.g. { curl = "/usr/bin/curl" }
   tools = {},
+  -- mount the notebook UI automatically when a .ipynb file is opened
+  auto_open = true,
 }
 
 function M.setup(opts)
   config = vim.tbl_deep_extend("force", config, opts or {})
   require("jotdown.tools").configure(config.tools)
+
+  local notebook_file = require("jotdown.notebook_file")
+  notebook_file.setup_autocmds(config.auto_open)
+  vim.api.nvim_create_user_command("Jotdown", function()
+    local bufnr = vim.api.nvim_get_current_buf()
+    if notebook_file._sessions[bufnr] then
+      notebook_file.toggle(bufnr)
+    else
+      notebook_file.open(bufnr)
+    end
+  end, { desc = "jotdown: open or toggle the notebook UI for this buffer" })
+
   return config
 end
 
