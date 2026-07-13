@@ -449,10 +449,22 @@ local function MarkdownCell(ctx, props)
   end
 
   if not editing.get() then
+    -- bordered like a code cell's editor, and never zero-height: an empty
+    -- cell renders a placeholder so it stays hoverable — chords hit-test
+    -- against the border-box, so there must BE a box
+    local body
+    if cell.source:find("%S") then
+      body = { comp = ui.markdown, props = { text = cell.source } }
+    else
+      body = {
+        comp = ui.text,
+        props = { text = "(empty markdown cell — edit with the e chord)", style = { text_hl = "Comment" } },
+      }
+    end
     return {
       comp = ui.col,
-      props = { on_key = keys },
-      children = { { comp = ui.markdown, props = { text = cell.source } } },
+      props = { on_key = keys, style = { border = true, padding = { x = 1 } } },
+      children = { body },
     }
   end
 
