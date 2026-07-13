@@ -255,6 +255,44 @@ describe("store index", function()
   end)
 end)
 
+describe("store cell rev", function()
+  it("bumps a cell's rev on mutations to that cell only", function()
+    local st, client = new_pair()
+    local a = st:insert_cell(1, { type = "code", source = "a" })
+    local b = st:insert_cell(2, { type = "code", source = "b" })
+    local ra, rb = st:cell(a).rev, st:cell(b).rev
+    assert.equal("number", type(ra))
+
+    st:set_source(a, "a2")
+    assert.truthy(st:cell(a).rev > ra)
+    assert.equal(rb, st:cell(b).rev)
+
+    -- the whole execution lifecycle bumps: queued, running, outputs, done
+    ra = st:cell(a).rev
+    st:run_cell(a)
+    assert.truthy(st:cell(a).rev > ra)
+    ra = st:cell(a).rev
+    client:last().handlers.on_stream("stdout", "x")
+    assert.truthy(st:cell(a).rev > ra)
+    ra = st:cell(a).rev
+    client:last().handlers.on_done({ status = "ok", execution_count = 1 })
+    assert.truthy(st:cell(a).rev > ra)
+    assert.equal(rb, st:cell(b).rev) -- b untouched throughout
+  end)
+
+  it("bumps queued cells backed out by an interrupt", function()
+    local st, client = new_pair()
+    local a = st:insert_cell(1, { type = "code", source = "a" })
+    local b = st:insert_cell(2, { type = "code", source = "b" })
+    st:run_cell(a)
+    st:run_cell(b)
+    local rb = st:cell(b).rev
+    st:interrupt()
+    assert.equal("idle", st:cell(b).state)
+    assert.truthy(st:cell(b).rev > rb)
+  end)
+end)
+
 describe("store content_rev", function()
   it("bumps on content mutations but not on kernel status", function()
     local st, client = new_pair()

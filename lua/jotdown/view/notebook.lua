@@ -248,7 +248,17 @@ local function cell_ops(store, cell, sync)
   }
 end
 
-local function code_cell(store, slot, cell, on_cell_write)
+-- Render probe: total cell-component renders, for the memoization spec.
+M._probe = { cell_renders = 0 }
+
+-- Both cell components are memoized on shallow prop equality: store, slot,
+-- the cell TABLE (mutated in place, so its identity is stable) and the
+-- on_cell_write closure never change — `rev` is the one prop that moves,
+-- and the store bumps it exactly when this cell is touched. A kernel-status
+-- notify or another cell's output stream re-renders no cell here.
+local function CodeCell(_, props)
+  M._probe.cell_renders = M._probe.cell_renders + 1
+  local store, slot, cell, on_cell_write = props.store, props.slot, props.cell, props.on_cell_write
   local buf = ensure_buf(slot, cell, on_cell_write)
   local mark = cell.execution_count and ("In [" .. cell.execution_count .. "]") or "In [ ]"
   local sync = function()
@@ -303,9 +313,6 @@ local function code_cell(store, slot, cell, on_cell_write)
   }
   return {
     comp = ui.col,
-    -- keyed by cell id: inserts and moves must MOVE this fiber (keeping the
-    -- subwindow bound to this cell's buffer), never morph it into a neighbor
-    key = cell.id,
     -- on_key fires for the component under the cursor: anywhere on this
     -- cell — header, mirror, outputs — the chords target THIS cell
     props = { gap = 0, on_key = keys },
@@ -313,7 +320,9 @@ local function code_cell(store, slot, cell, on_cell_write)
   }
 end
 
-local function markdown_cell(store, cell)
+local function MarkdownCell(_, props)
+  M._probe.cell_renders = M._probe.cell_renders + 1
+  local store, cell = props.store, props.cell
   -- render="focus" subwindow editing for markdown is the TBD next step
   -- (leaning split-preview, see README); until decided it renders rich,
   -- always. Management chords work here too; <CR> just advances (Jupyter's
@@ -324,7 +333,6 @@ local function markdown_cell(store, cell)
   end
   return {
     comp = ui.col,
-    key = cell.id,
     props = { on_key = keys },
     children = { { comp = ui.markdown, props = { text = cell.source } } },
   }
@@ -395,11 +403,21 @@ function M.Notebook(ctx, props)
     },
   }
   for _, cell in ipairs(store.cells) do
-    if cell.type == "code" then
-      children[#children + 1] = code_cell(store, slot.current, cell, props.on_cell_write)
-    else
-      children[#children + 1] = markdown_cell(store, cell)
-    end
+    children[#children + 1] = {
+      comp = cell.type == "code" and CodeCell or MarkdownCell,
+      -- keyed by cell id: inserts and moves must MOVE this fiber (keeping
+      -- a code cell's subwindow bound to its own buffer), never morph it
+      -- into a neighbor; memo bails when the cell wasn't touched (rev)
+      key = cell.id,
+      memo = true,
+      props = {
+        store = store,
+        slot = slot.current,
+        cell = cell,
+        rev = cell.rev,
+        on_cell_write = props.on_cell_write,
+      },
+    }
   end
 
   return {

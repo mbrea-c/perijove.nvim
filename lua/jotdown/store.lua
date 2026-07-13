@@ -7,7 +7,10 @@
 --
 -- Cells are plain tables:
 --   { id, type = "code"|"markdown", source, outputs = {}, state,
---     execution_count }
+--     execution_count, rev }
+-- `rev` counts mutations to THAT cell (source, type, state, outputs) — the
+-- view keys per-cell memoization off it, so a notify re-renders only the
+-- touched cells. Reorders don't bump it: position is the parent's business.
 -- Outputs are tagged unions, consecutive same-name stream chunks coalesced:
 --   { kind = "stream", name, text }
 --   { kind = "result",  data, metadata }   execute_result mime bundle
@@ -18,6 +21,10 @@ local M = {}
 
 local Store = {}
 Store.__index = Store
+
+local function touch(cell)
+  cell.rev = cell.rev + 1
+end
 
 function M.new(client)
   local st = setmetatable({
@@ -76,6 +83,7 @@ function Store:insert_cell(pos, spec)
     outputs = spec.outputs or {},
     state = "idle",
     execution_count = spec.execution_count,
+    rev = 0,
     -- ipynb bookkeeping (cell id, metadata, unknown fields) carried for the
     -- save path; nil for cells born in the editor
     meta = spec.meta,
@@ -111,6 +119,7 @@ function Store:set_type(id, type)
   cell.state = "idle"
   cell.outputs = {}
   cell.execution_count = nil
+  touch(cell)
   self:_notify()
 end
 
@@ -126,6 +135,7 @@ function Store:set_source(id, text)
   local _, cell = self:_find(id)
   if cell then
     cell.source = text
+    touch(cell)
     self:_notify()
   end
 end
@@ -164,6 +174,7 @@ function Store:run_cell(id)
     return
   end
   cell.state = "queued"
+  touch(cell)
   table.insert(self._queue, id)
   self:_dispatch()
   self:_notify()
@@ -190,6 +201,7 @@ function Store:_clear_queue()
     local _, cell = self:_find(id)
     if cell then
       cell.state = "idle"
+      touch(cell)
     end
   end
   self._queue = {}
@@ -216,6 +228,7 @@ function Store:_dispatch()
   self._running = id
   cell.state = "running"
   cell.outputs = {}
+  touch(cell)
   self.client:execute(cell.source, self:_exec_handlers(id))
 end
 
@@ -228,6 +241,7 @@ function Store:_exec_handlers(id)
       local _, cell = self:_find(id)
       if cell then
         fn(cell, ...)
+        touch(cell)
         self:_notify()
       end
     end
@@ -256,6 +270,7 @@ function Store:_exec_handlers(id)
       if cell then
         cell.state = reply.status == "ok" and "ok" or "error"
         cell.execution_count = reply.execution_count
+        touch(cell)
       end
       if reply.status ~= "ok" then
         -- Jupyter aborts requests queued behind a failure; mirror that

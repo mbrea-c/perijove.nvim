@@ -348,6 +348,23 @@ describe("view.notebook", function()
     notebook.configure({ prefix = "<C-j>" })
   end)
 
+  it("memoizes cells: only the touched cell re-renders", function()
+    local st, client = new_pair()
+    local a = st:insert_cell(1, { type = "code", source = "x = 1" })
+    st:insert_cell(2, { type = "markdown", source = "prose" })
+    local handle = mount_nb(st)
+
+    -- a kernel-status notify re-renders the document but NO cell
+    local before = notebook._probe.cell_renders
+    client:push_status("busy")
+    assert.equal(before, notebook._probe.cell_renders)
+
+    -- a one-cell edit re-renders exactly that cell
+    st:set_source(a, "x = 2")
+    assert.equal(before + 1, notebook._probe.cell_renders)
+    handle.unmount()
+  end)
+
   it("reflects source edits made through the store after a re-render", function()
     local st = new_pair()
     local a = st:insert_cell(1, { type = "code", source = "before" })
