@@ -27,8 +27,8 @@ local M = {}
 M.PREFIX = "<C-j>"
 
 -- The per-cell chord suffixes: run, run-and-advance, add below/above,
--- delete, retype, move down/up.
-local SUFFIXES = { "r", "<CR>", "o", "O", "d", "m", "J", "K" }
+-- delete, retype, move down/up, edit (markdown split preview).
+local SUFFIXES = { "r", "<CR>", "o", "O", "d", "m", "J", "K", "e" }
 
 -- Keys the host mount must route to per-component on_key handlers (the
 -- `keys` mount option). Rebuilt by configure().
@@ -62,12 +62,11 @@ local STATE_ICON = {
 -- When the view is wired to a file (props.on_cell_write), cell buffers are
 -- NAMED acwrite buffers, so :w inside a focused cell routes to the notebook
 -- save instead of erroring on a nameless scratch buffer.
-local function ensure_buf(slot, cell, on_cell_write)
+local function ensure_buf(slot, cell, on_cell_write, ft)
   local buf = slot.bufs[cell.id]
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
     buf = vim.api.nvim_create_buf(false, true)
     vim.bo[buf].bufhidden = "hide"
-    vim.bo[buf].filetype = "python"
     if on_cell_write then
       vim.bo[buf].buftype = "acwrite"
       vim.api.nvim_buf_set_name(buf, ("jotdown://%d/cell/%s"):format(buf, cell.id))
@@ -80,6 +79,10 @@ local function ensure_buf(slot, cell, on_cell_write)
     end
     slot.bufs[cell.id] = buf
     slot.synced[cell.id] = nil -- force the initial write below
+  end
+  -- retypes (code <-> markdown) reuse the buffer with a new language
+  if vim.bo[buf].filetype ~= ft then
+    vim.bo[buf].filetype = ft
   end
   if slot.synced[cell.id] ~= cell.source then
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(cell.source, "\n"))
@@ -259,7 +262,7 @@ M._probe = { cell_renders = 0 }
 local function CodeCell(_, props)
   M._probe.cell_renders = M._probe.cell_renders + 1
   local store, slot, cell, on_cell_write = props.store, props.slot, props.cell, props.on_cell_write
-  local buf = ensure_buf(slot, cell, on_cell_write)
+  local buf = ensure_buf(slot, cell, on_cell_write, "python")
   local mark = cell.execution_count and ("In [" .. cell.execution_count .. "]") or "In [ ]"
   local sync = function()
     store:set_source(cell.id, buf_text(buf))
@@ -320,21 +323,122 @@ local function CodeCell(_, props)
   }
 end
 
-local function MarkdownCell(_, props)
+-- Markdown cells render rich; prefix-e toggles a split editing mode — the
+-- raw source in a REAL markdown buffer on the left (render="always", so it
+-- is visible and focusable), a live rendered preview on the right (repainted
+-- from the buffer on every text change; the store only takes the text when
+-- editing ends, like code cells take theirs at run). Management chords work
+-- here too; <CR> just advances (Jupyter's run-on-markdown renders and moves
+-- on).
+local function MarkdownCell(ctx, props)
   M._probe.cell_renders = M._probe.cell_renders + 1
-  local store, cell = props.store, props.cell
-  -- render="focus" subwindow editing for markdown is the TBD next step
-  -- (leaning split-preview, see README); until decided it renders rich,
-  -- always. Management chords work here too; <CR> just advances (Jupyter's
-  -- run-on-markdown renders and moves on).
+  local store, slot, cell = props.store, props.slot, props.cell
+  local editing = ctx.use_state(false)
+  local live = ctx.use_state({}) -- { text? }: the preview while typing
+
   local keys = cell_ops(store, cell, nil)
   keys[M.PREFIX .. "<CR>"] = function()
     advance(store, cell)
   end
+
+  local function enter_editing()
+    live.set({})
+    editing.set(true)
+    -- land in the editor once this render's flush has opened its float
+    vim.schedule(function()
+      local buf = slot.bufs[cell.id]
+      if not (buf and vim.api.nvim_buf_is_valid(buf)) then
+        return
+      end
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        if vim.api.nvim_win_get_buf(win) == buf then
+          vim.api.nvim_set_current_win(win)
+          return
+        end
+      end
+    end)
+  end
+
+  local function leave_editing()
+    local buf = slot.bufs[cell.id]
+    if buf and vim.api.nvim_buf_is_valid(buf) then
+      -- the buffer wins on the way out, exactly like a code cell at run
+      local text = buf_text(buf)
+      slot.synced[cell.id] = text
+      store:set_source(cell.id, text)
+    end
+    editing.set(false)
+  end
+
+  -- Published per render so the buffer-local map (created once) always
+  -- calls the live closures — the playground's `entry.reload` pattern.
+  slot.md_toggle[cell.id] = function()
+    if editing.get() then
+      leave_editing()
+    else
+      enter_editing()
+    end
+  end
+  keys[M.PREFIX .. "e"] = function()
+    slot.md_toggle[cell.id]()
+  end
+
+  if not editing.get() then
+    return {
+      comp = ui.col,
+      props = { on_key = keys },
+      children = { { comp = ui.markdown, props = { text = cell.source } } },
+    }
+  end
+
+  local buf = ensure_buf(slot, cell, props.on_cell_write, "markdown")
+  if not slot.md_mapped[cell.id] then
+    slot.md_mapped[cell.id] = true
+    vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+      buffer = buf,
+      callback = function()
+        local fn = slot.live[cell.id]
+        if fn then
+          fn()
+        end
+      end,
+    })
+    vim.keymap.set("n", M.PREFIX .. "e", function()
+      -- pop to the page first (fibrous <Esc>), then close the split
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "xt", false)
+      local t = slot.md_toggle[cell.id]
+      if t then
+        t()
+      end
+    end, { buffer = buf, desc = "jotdown: done editing markdown" })
+  end
+  slot.live[cell.id] = function()
+    live.set({ text = buf_text(buf) })
+  end
+
   return {
     comp = ui.col,
     props = { on_key = keys },
-    children = { { comp = ui.markdown, props = { text = cell.source } } },
+    children = {
+      {
+        comp = ui.row,
+        props = { gap = 1 },
+        children = {
+          {
+            comp = ui.col,
+            props = { grow = 1 },
+            children = {
+              { comp = ui.raw_buffer, props = { bufnr = buf, render = "always", style = { border = true } } },
+            },
+          },
+          {
+            comp = ui.col,
+            props = { grow = 1, style = { border = true, padding = { x = 1 } } },
+            children = { { comp = ui.markdown, props = { text = live.get().text or cell.source } } },
+          },
+        },
+      },
+    },
   }
 end
 
@@ -356,7 +460,7 @@ function M.Notebook(ctx, props)
   -- per-cell buffers live as long as the view; deleted with it
   local slot = ctx.use_ref(nil)
   if not slot.current then
-    slot.current = { bufs = {}, synced = {}, mapped = {} }
+    slot.current = { bufs = {}, synced = {}, mapped = {}, md_mapped = {}, md_toggle = {}, live = {} }
   end
   ctx.use_effect(function()
     return function()

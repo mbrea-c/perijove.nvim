@@ -348,6 +348,58 @@ describe("view.notebook", function()
     notebook.configure({ prefix = "<C-j>" })
   end)
 
+  it("edits a markdown cell in a split preview on prefix-e", function()
+    local st = new_pair()
+    local a = st:insert_cell(1, { type = "markdown", source = "# HeadingOne" })
+    local handle = mount_nb(st)
+    assert.truthy(text_of(handle.bufnr):find("HeadingOne", 1, true)) -- rendered
+
+    -- enter editing: a real markdown buffer appears, split beside a live
+    -- preview, and the editor is focused ready to type
+    press_at(handle, "HeadingOne", notebook.PREFIX .. "e")
+    vim.wait(50)
+    local editor = vim.api.nvim_win_get_buf(0) -- auto-entered
+    assert.truthy(editor ~= handle.bufnr)
+    assert.equal("markdown", vim.bo[editor].filetype)
+    assert.equal("# HeadingOne", table.concat(vim.api.nvim_buf_get_lines(editor, 0, -1, false), "\n"))
+
+    -- typing live-updates the preview without touching the store yet
+    vim.api.nvim_buf_set_lines(editor, 0, -1, false, { "# HeadingTwo" })
+    vim.api.nvim_exec_autocmds("TextChanged", { buffer = editor })
+    vim.wait(50)
+    assert.truthy(text_of(handle.bufnr):find("HeadingTwo", 1, true))
+
+    -- prefix-e inside the editor leaves editing: the store takes the text,
+    -- the cell renders rich again, focus returns to the page
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(notebook.PREFIX .. "e", true, false, true), "xt", false)
+    vim.wait(50)
+    assert.equal("# HeadingTwo", st:cell(a).source)
+    assert.equal(handle.bufnr, vim.api.nvim_win_get_buf(0))
+    handle.unmount()
+  end)
+
+  it("saves markdown editor buffers through sync_to_store", function()
+    local st = new_pair()
+    local a = st:insert_cell(1, { type = "markdown", source = "before" })
+    local actions = { current = {} }
+    local handle = mount.floating(notebook.Notebook, {
+      store = st,
+      actions = actions,
+    }, { width = 60, height = 24, mode = "scroll", keys = notebook.KEYS })
+
+    press_at(handle, "before", notebook.PREFIX .. "e")
+    vim.wait(50)
+    local editor
+    actions.current.each_cell_buf(function(b)
+      editor = b
+    end)
+    assert.is_not_nil(editor)
+    vim.api.nvim_buf_set_lines(editor, 0, -1, false, { "after md" })
+    actions.current.sync_to_store()
+    assert.equal("after md", st:cell(a).source)
+    handle.unmount()
+  end)
+
   it("memoizes cells: only the touched cell re-renders", function()
     local st, client = new_pair()
     local a = st:insert_cell(1, { type = "code", source = "x = 1" })

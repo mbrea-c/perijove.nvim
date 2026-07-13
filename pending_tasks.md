@@ -30,20 +30,8 @@ later scroll/flush repairs it.
   painted notebook blanks some cells after insert-above/move until a cell
   is focused or the notebook is remounted.
 
-## Markdown cell editing (decision pending)
-
-- [ ] Decide between (a) rendered when unfocused / raw source while focused,
-      and (b) split preview while focused — source left, rendered right —
-      and rendered-only when unfocused. Currently leaning (b);
-      fibrous-docs' `site/lua/webapp/playground.lua` is the prior art.
-- [ ] Implement it with a render="focus" subwindow, like code cells.
-
 ## Rendering & scale
 
-- [ ] Memoize per-cell components (`memo = true`, the weave transcript
-      pattern) so a store notify re-renders only the changed cell. Cells
-      are keyed by cell id now, which memo needs; the store still has to
-      expose a per-cell rev for the shallow prop compare.
 - [ ] Watch per-cell subwin float cost on large notebooks; if mirror/float
       materialization needs to get lazier, that is a fibrous-core
       discussion with Manuel FIRST (see AGENTS.md at the repo root).

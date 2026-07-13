@@ -62,17 +62,19 @@ trip, and raw-JSON edits win by re-parse on the way back up.
   `<C-j>r` run hovered cell · `<C-j><CR>` run and advance (appends a cell
   when there is no next one; on markdown, just advances) · `<C-j>o`/`<C-j>O`
   add cell below/above · `<C-j>d` delete cell · `<C-j>J`/`<C-j>K` move cell
-  down/up · `<C-j>m` retype code<->markdown. Notebook-wide: `<C-j>a` run
-  all, `<C-j>i` interrupt, `<C-j>w` save, `<C-j>t` toggle raw ipynb.
+  down/up · `<C-j>m` retype code<->markdown · `<C-j>e` edit markdown in a
+  split preview. Notebook-wide: `<C-j>a` run all, `<C-j>i` interrupt,
+  `<C-j>w` save, `<C-j>t` toggle raw ipynb.
 
-- Every cell — markdown AND code — is a fibrous subwindow with
-  `render = "focus"`: unfocused it shows the painted mirror in the root
-  buffer, focusing reveals the live float (fibrous's default subwin policy).
-- Markdown cell editing UX is TBD between (a) rendered when unfocused /
-  raw source while focused, and (b) split preview while focused (source
-  left, rendered right) / rendered only when unfocused. Currently leaning
-  (b); fibrous-docs' playground (`site/lua/webapp/playground.lua`, a
-  raw_buffer editor driving a live preview) is the prior art to build on.
+- Code cells are fibrous subwindows with `render = "focus"`: unfocused you
+  see the painted mirror in the root buffer, focusing (`<CR>`/click on the
+  mirror) reveals the live float with native filetype/undo.
+- Markdown cells render rich; `<C-j>e` toggles split editing — the raw
+  source in a real markdown buffer on the left (visible, auto-entered),
+  a live rendered preview on the right, repainted as you type. `<C-j>e`
+  again (inside or hovering) closes the split and the store takes the
+  text. Built on fibrous-docs' playground pattern
+  (`site/lua/webapp/playground.lua`).
 
 ## Development
 
