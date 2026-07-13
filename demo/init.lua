@@ -4,10 +4,11 @@
 -- no network. Mounted over the REAL current window (not a float), like
 -- actual usage will be.
 --
--- Keybinds are chords under the jotdown prefix (<C-j>, see view/notebook.lua):
---   <C-j>r  run the cell under the cursor (works inside a focused cell too)
+-- Keybinds are chords under the jotdown prefix (<C-j>, see view/notebook.lua
+-- and the seed's first cell): per-cell r/<CR>/o/O/d/J/K/m/e/c/C, plus
 --   <C-j>a  run all cells
 --   <C-j>i  interrupt the kernel (try it on the sleep cell)
+--   <C-j>x  clear all outputs
 --   <C-j>q  quit the demo
 -- Plus the fibrous basics: hjkl glides over cells; <CR>/i on a code cell
 -- enters its real buffer (hjkl at the edge steps back out); hover a [run]
@@ -24,6 +25,7 @@ vim.opt.runtimepath:prepend(fibrous)
 package.path = table.concat({
   root .. "/lua/?.lua",
   root .. "/lua/?/init.lua",
+  root .. "/?.lua", -- demo.seed lives outside lua/
   fibrous .. "/lua/?.lua",
   fibrous .. "/lua/?/init.lua",
   package.path,
@@ -50,6 +52,9 @@ end, { desc = "jotdown: run all cells" })
 vim.keymap.set("n", prefix .. "i", function()
   st:interrupt()
 end, { desc = "jotdown: interrupt the kernel" })
+vim.keymap.set("n", prefix .. "x", function()
+  st:clear_all_outputs()
+end, { desc = "jotdown: clear all outputs" })
 vim.keymap.set("n", prefix .. "q", function()
   vim.cmd("qa!")
 end, { desc = "jotdown: quit the demo" })

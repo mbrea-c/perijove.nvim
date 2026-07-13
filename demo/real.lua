@@ -4,8 +4,11 @@
 --   nix run .#demo-real            (brings all three)
 --   nix develop -c make demo-real  (ditto, against the working tree)
 --
--- Same keybinds as the scripted demo: <C-j>r run hovered cell, <C-j>a run
--- all, <C-j>i interrupt (the sleep cell earns it here), <C-j>q quit.
+-- Same keybinds as the scripted demo (the seed's first cell lists them):
+-- everything is a chord under <C-j> — per-cell r/<CR>/o/O/d/J/K/m/e/c/C,
+-- notebook-wide a run-all, i interrupt, R restart, x clear-all, q quit.
+-- Being real python, the input() cell actually prompts and the rich-output
+-- cell comes back as rendered markdown with math.
 
 local here = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h")
 local root = vim.fn.fnamemodify(here, ":h")
@@ -78,6 +81,12 @@ end, { desc = "jotdown: run all cells" })
 vim.keymap.set("n", prefix .. "i", function()
   st:interrupt()
 end, { desc = "jotdown: interrupt the kernel" })
+vim.keymap.set("n", prefix .. "R", function()
+  st:restart()
+end, { desc = "jotdown: restart the kernel" })
+vim.keymap.set("n", prefix .. "x", function()
+  st:clear_all_outputs()
+end, { desc = "jotdown: clear all outputs" })
 vim.keymap.set("n", prefix .. "q", function()
   vim.cmd("qa!")
 end, { desc = "jotdown: quit the demo" })
