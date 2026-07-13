@@ -185,12 +185,8 @@ describe("view.notebook", function()
     handle.unmount()
   end)
 
-  -- NOTE on spec structure: chords that shift a subwindow DOWNWARD corrupt
-  -- the painted canvas today (a fibrous sync-ordering bug: a moved entry
-  -- restores its old box over the fresh mirror a neighbour just painted —
-  -- see pending_tasks.md). The store stays correct, so each such press is
-  -- the LAST action of its spec, asserted store-side. The full multi-chord
-  -- flow is pinned below, skipped until the fibrous fix lands.
+  -- One focused spec per chord (store-side assertions), plus the chained
+  -- flow at the end driving everything through the painted text.
   it("adds a code cell below the hovered cell on prefix-o", function()
     local st = new_pair()
     local a = st:insert_cell(1, { type = "code", source = "first = 1" })
@@ -252,14 +248,10 @@ describe("view.notebook", function()
   end)
 
   -- The full flow — chord after chord over one live notebook, locating cells
-  -- by their PAINTED text. Exercises exactly what the fibrous bug corrupts;
-  -- un-skip when the mirror-restore ordering fix lands in fibrous core.
-  local FIBROUS_MIRROR_MOVE_FIXED = false
-  it("chains management chords over one notebook (blocked on fibrous)", function()
-    if not FIBROUS_MIRROR_MOVE_FIXED then
-      io.write("[skip] view: fibrous mirror-restore ordering bug (pending_tasks.md)\n")
-      return
-    end
+  -- by their PAINTED text. This is what fibrous's mirror-restore ordering
+  -- used to corrupt (fixed: sync restores every moved box before any mirror
+  -- paints — see fibrous tests/inline/mirror_move_spec.lua).
+  it("chains management chords over one notebook", function()
     local st = new_pair()
     local a = st:insert_cell(1, { type = "code", source = "first = 1" })
     st:insert_cell(2, { type = "markdown", source = "prose here" })
