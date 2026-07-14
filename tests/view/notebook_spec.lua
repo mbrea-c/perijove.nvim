@@ -471,10 +471,15 @@ describe("view.notebook", function()
     local handle = mount_nb(st)
     st:run_cell(a)
     local answered
+    local _, boxes_before = text_of(handle.bufnr):gsub("╭", "")
     client:last().handlers.on_input("YourName:", false, function(text)
       answered = text
     end)
     assert.truthy(text_of(handle.bufnr):find("YourName:", 1, true)) -- the prompt shows
+    -- the input FIELD must be visible too: an empty text_input mirrors as
+    -- nothing, so without its own border there is nothing to hover
+    local _, boxes_after = text_of(handle.bufnr):gsub("╭", "")
+    assert.equal(boxes_before + 1, boxes_after)
 
     st:answer_input("bob")
     assert.equal("bob", answered)

@@ -90,7 +90,9 @@ function Client:connect(cb)
         end
       end,
       on_close = function()
-        if self._kernel_handlers.on_status then
+        -- an INTENTIONAL shutdown must not report: the notify would drive a
+        -- re-render of a view that is being torn down (VimLeave, :q)
+        if not self._closing and self._kernel_handlers.on_status then
           self._kernel_handlers.on_status("disconnected")
         end
       end,
@@ -161,6 +163,7 @@ function Client:restart(cb)
 end
 
 function Client:shutdown(cb)
+  self._closing = true
   if self._conn then
     self._conn.close()
     self._conn = nil

@@ -371,10 +371,17 @@ local function CodeCell(_, props)
           props = {
             width = 30,
             clear_on_submit = true,
+            -- an empty input mirrors as nothing: the border IS the field's
+            -- visible (and hoverable) presence on the page
+            style = { border = "rounded" },
             on_submit = function(value)
               store:answer_input(value)
             end,
           },
+        },
+        {
+          comp = ui.text,
+          props = { text = "(<CR> in normal mode submits)", style = { text_hl = "Comment" } },
         },
       },
     }

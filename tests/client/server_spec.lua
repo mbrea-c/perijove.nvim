@@ -207,6 +207,28 @@ describe("client.server interrupt", function()
   end)
 end)
 
+describe("client.server close", function()
+  it("reports an unexpected channel close, but not an intentional shutdown", function()
+    local c, t = connected_client()
+    local statuses = {}
+    c:attach({
+      on_status = function(s)
+        table.insert(statuses, s)
+      end,
+    })
+    -- unexpected: the wire dropped under us
+    t.ws.handlers.on_close()
+    assert.same({ "disconnected" }, statuses)
+
+    -- intentional: shutdown closes the channel itself; the late on_close
+    -- must not notify a view that is being torn down (the :q crash)
+    statuses = {}
+    c:shutdown()
+    t.ws.handlers.on_close()
+    assert.same({}, statuses)
+  end)
+end)
+
 describe("client.server restart", function()
   it("POSTs to the kernel's restart endpoint", function()
     local c, t = connected_client()
