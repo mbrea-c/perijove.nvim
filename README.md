@@ -62,11 +62,11 @@ trip, and raw-JSON edits win by re-parse on the way back up.
   `<C-j>r` run hovered cell · `<C-j><CR>` run and advance (appends a cell
   when there is no next one; on markdown, just advances) · `<C-j>o`/`<C-j>O`
   add cell below/above · `<C-j>d` delete cell · `<C-j>J`/`<C-j>K` move cell
-  down/up · `<C-j>m` retype code<->markdown · `<C-j>e` edit markdown in a
-  split preview · `<C-j>c` fold outputs · `<C-j>C` clear outputs.
+  down/up · `<C-j>m` retype code<->markdown · `<C-j>c` fold outputs ·
+  `<C-j>C` clear outputs.
   Notebook-wide: `<C-j>a` run all, `<C-j>i` interrupt, `<C-j>R` restart
   kernel, `<C-j>x` clear all outputs, `<C-j>w` save, `<C-j>t` toggle raw
-  ipynb.
+  ipynb, `<C-j>p` toggle markdown side previews.
 
 - `input()` works: the kernel's stdin ask renders an inline prompt under
   the running cell (a fibrous text_input; `<CR>` submits). The status line
@@ -75,11 +75,15 @@ trip, and raw-JSON edits win by re-parse on the way back up.
 - Code cells are fibrous subwindows with `render = "focus"`: unfocused you
   see the painted mirror in the root buffer, focusing (`<CR>`/click on the
   mirror) reveals the live float with native filetype/undo.
-- Markdown cells render rich; `<C-j>e` toggles split editing — the raw
-  source in a real markdown buffer on the left (visible, auto-entered),
-  a live rendered preview on the right, repainted as you type. `<C-j>e`
-  again (inside or hovering) closes the split and the store takes the
-  text. Built on fibrous-docs' playground pattern
+- Markdown cells render rich and borderless (an empty one shows an italic
+  grayed placeholder); ACTIVATING one — `<CR>` or click, like any fibrous
+  widget — opens split editing: the raw source in a real markdown buffer
+  on the left (auto-entered, cursor on the source line best matching the
+  activated rendered line), a live rendered preview on the right,
+  repainted as you type. Unfocusing the editor (fibrous `<Esc>` back to
+  the page, a jump elsewhere) closes the split and the store takes the
+  text. `<C-j>p` toggles the preview pane globally (default on; off =
+  source-only editing). Built on fibrous-docs' playground pattern
   (`site/lua/webapp/playground.lua`).
 
 ## Development

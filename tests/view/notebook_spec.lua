@@ -354,16 +354,17 @@ describe("view.notebook", function()
     local hl = vim.api.nvim_get_hl(0, { name = "JotdownPlaceholder" })
     assert.is_true(hl.italic == true)
 
-    -- and the chords reach it: e opens the editor on the empty cell
-    press_at(handle, "empty markdown", notebook.PREFIX .. "e")
+    -- and activation reaches it: <CR> on the placeholder opens the editor
+    press_at(handle, "empty markdown", "<CR>")
     vim.wait(50)
     local editor = vim.api.nvim_win_get_buf(0)
     assert.truthy(editor ~= handle.bufnr)
     assert.equal("markdown", vim.bo[editor].filetype)
 
-    -- leave editing with some text: the cell renders it, the placeholder gone
+    -- leave editing (unfocus) with some text: the cell renders it, the
+    -- placeholder gone
     vim.api.nvim_buf_set_lines(editor, 0, -1, false, { "now with prose" })
-    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(notebook.PREFIX .. "e", true, false, true), "xt", false)
+    vim.api.nvim_set_current_win(handle.winid)
     vim.wait(50)
     assert.equal("now with prose", st:cell(a).source)
     text = text_of(handle.bufnr)
@@ -372,15 +373,16 @@ describe("view.notebook", function()
     handle.unmount()
   end)
 
-  it("edits a markdown cell in a split preview on prefix-e", function()
+  it("activating a markdown cell edits it in a split preview, until unfocus", function()
     local st = new_pair()
     local a = st:insert_cell(1, { type = "markdown", source = "# HeadingOne" })
     local handle = mount_nb(st)
     assert.truthy(text_of(handle.bufnr):find("HeadingOne", 1, true)) -- rendered
 
-    -- enter editing: a real markdown buffer appears, split beside a live
-    -- preview, and the editor is focused ready to type
-    press_at(handle, "HeadingOne", notebook.PREFIX .. "e")
+    -- <CR> on the rendered cell (no dedicated chord): a real markdown buffer
+    -- appears, split beside a live preview, and the editor is focused ready
+    -- to type
+    press_at(handle, "HeadingOne", "<CR>")
     vim.wait(50)
     local editor = vim.api.nvim_win_get_buf(0) -- auto-entered
     assert.truthy(editor ~= handle.bufnr)
@@ -393,12 +395,67 @@ describe("view.notebook", function()
     vim.wait(50)
     assert.truthy(text_of(handle.bufnr):find("HeadingTwo", 1, true))
 
-    -- prefix-e inside the editor leaves editing: the store takes the text,
-    -- the cell renders rich again, focus returns to the page
-    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(notebook.PREFIX .. "e", true, false, true), "xt", false)
+    -- unfocusing the editor leaves editing: the store takes the text and the
+    -- cell renders rich again
+    vim.api.nvim_set_current_win(handle.winid)
     vim.wait(50)
     assert.equal("# HeadingTwo", st:cell(a).source)
     assert.equal(handle.bufnr, vim.api.nvim_win_get_buf(0))
+    handle.unmount()
+  end)
+
+  it("prefix-p drops and restores the side preview, live from the editor", function()
+    local st = new_pair()
+    st:insert_cell(1, { type = "markdown", source = "**BoldWord** tail" })
+    local handle = mount_nb(st)
+
+    press_at(handle, "BoldWord", "<CR>")
+    vim.wait(50)
+    local editor = vim.api.nvim_win_get_buf(0)
+    assert.truthy(editor ~= handle.bufnr)
+    -- preview on (the default): the rendered text (asterisks consumed) shows
+    -- on the page beside the editor float; the RAW text lives in the shown
+    -- float itself, never in the root canvas
+    local _, rendered = text_of(handle.bufnr):gsub("BoldWord", "")
+    assert.equal(1, rendered)
+
+    -- toggled from INSIDE the editor: the preview pane drops, the editor
+    -- survives and keeps focus, and the flag is module-global
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(notebook.PREFIX .. "p", true, false, true), "xt", false)
+    vim.wait(50)
+    _, rendered = text_of(handle.bufnr):gsub("BoldWord", "")
+    assert.equal(0, rendered)
+    assert.equal(editor, vim.api.nvim_win_get_buf(0))
+    assert.is_false(notebook.preview)
+
+    -- and back on
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(notebook.PREFIX .. "p", true, false, true), "xt", false)
+    vim.wait(50)
+    _, rendered = text_of(handle.bufnr):gsub("BoldWord", "")
+    assert.equal(1, rendered)
+    assert.equal(editor, vim.api.nvim_win_get_buf(0))
+    assert.is_true(notebook.preview)
+    handle.unmount()
+  end)
+
+  it("activation lands the editor cursor on the matching source line", function()
+    -- the pure word-overlap heuristic (the parser keeps no source positions)
+    local src = "# Title Words\n\nplain prose line\n\n- item alpha\n- item beta"
+    assert.equal(1, notebook.source_line_for(src, " Title Words"))
+    assert.equal(6, notebook.source_line_for(src, "• item beta"))
+    assert.equal(1, notebook.source_line_for(src, "~~~~")) -- no words: the top
+
+    -- end to end: <CR> over the third paragraph opens the editor there
+    local st = new_pair()
+    st:insert_cell(1, { type = "markdown", source = "alpha one\n\nbravo two\n\ncharlie three" })
+    local handle = mount_nb(st)
+    press_at(handle, "charlie", "<CR>")
+    vim.wait(50)
+    local win = vim.api.nvim_get_current_win()
+    assert.truthy(vim.api.nvim_win_get_buf(win) ~= handle.bufnr)
+    assert.equal(5, vim.api.nvim_win_get_cursor(win)[1])
+    vim.api.nvim_set_current_win(handle.winid)
+    vim.wait(50)
     handle.unmount()
   end)
 
@@ -411,7 +468,7 @@ describe("view.notebook", function()
       actions = actions,
     }, { width = 60, height = 24, mode = "scroll", keys = notebook.KEYS })
 
-    press_at(handle, "before", notebook.PREFIX .. "e")
+    press_at(handle, "before", "<CR>")
     vim.wait(50)
     local editor
     actions.current.each_cell_buf(function(b)

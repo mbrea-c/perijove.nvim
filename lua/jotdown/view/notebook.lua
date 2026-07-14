@@ -1,8 +1,8 @@
 -- The notebook view: a fibrous document projecting the store. First slice —
--- kernel status line, markdown cells rendered rich (ui.markdown; the focused
--- editing UX is TBD, see README), code cells as per-cell REAL buffers in
--- render="focus" subwindows (unfocused you see the painted mirror, focusing
--- reveals the live float with native filetype/undo), outputs beneath.
+-- kernel status line, markdown cells rendered rich (ui.markdown; activation
+-- opens split editing, see MarkdownCell), code cells as per-cell REAL buffers
+-- in render="focus" subwindows (unfocused you see the painted mirror,
+-- focusing reveals the live float with native filetype/undo), outputs beneath.
 --
 -- Source-of-truth rules for code text:
 --   - the store is authoritative when mutated through its API: a re-render
@@ -27,9 +27,10 @@ local M = {}
 M.PREFIX = "<C-j>"
 
 -- The per-cell chord suffixes: run, run-and-advance, add below/above,
--- delete, retype, move down/up, edit (markdown split preview), fold
--- outputs, clear outputs.
-local SUFFIXES = { "r", "<CR>", "o", "O", "d", "m", "J", "K", "e", "c", "C" }
+-- delete, retype, move down/up, toggle markdown side previews, fold
+-- outputs, clear outputs. (Markdown EDITING has no chord: activation —
+-- <CR>/click on the rendered cell — opens the editor.)
+local SUFFIXES = { "r", "<CR>", "o", "O", "d", "m", "J", "K", "p", "c", "C" }
 
 -- Keys the host mount must route to per-component on_key handlers (the
 -- `keys` mount option). Rebuilt by configure().
@@ -45,6 +46,11 @@ function M.configure(opts)
   end
 end
 M.configure({})
+
+-- Side previews for markdown-cell editing, jotdown-global: the prefix-p
+-- chord flips it from anywhere in a notebook (page or focused cell float).
+-- Off = editing is the source buffer alone. Defaults to enabled.
+M.preview = true
 
 local STATE_ICON = {
   idle = " ",
@@ -338,6 +344,14 @@ local function CodeCell(_, props)
   if not slot.mapped[cell.id] then
     slot.mapped[cell.id] = true
     vim.keymap.set("n", M.PREFIX .. "r", run, { buffer = buf, desc = "jotdown: run this cell" })
+    -- the preview toggle is notebook-global, so it works from inside a
+    -- focused code cell too (in place, no Esc-pop needed)
+    vim.keymap.set("n", M.PREFIX .. "p", function()
+      local t = slot.toggle_preview
+      if t then
+        t()
+      end
+    end, { buffer = buf, desc = "jotdown: toggle markdown side previews" })
     for lhs, fn in pairs(keys) do
       if lhs ~= M.PREFIX .. "r" then
         vim.keymap.set("n", lhs, function()
@@ -409,13 +423,49 @@ local function CodeCell(_, props)
   }
 end
 
--- Markdown cells render rich; prefix-e toggles a split editing mode — the
--- raw source in a REAL markdown buffer on the left (render="always", so it
--- is visible and focusable), a live rendered preview on the right (repainted
--- from the buffer on every text change; the store only takes the text when
--- editing ends, like code cells take theirs at run). Management chords work
--- here too; <CR> just advances (Jupyter's run-on-markdown renders and moves
--- on).
+-- Best-effort source map for activation: the markdown parser keeps no source
+-- positions, so map the RENDERED line under the cursor back to source by
+-- word overlap — the source line sharing the most words wins (ties: the
+-- earliest). Inline markup is punctuation to the word pattern, so words
+-- survive rendering for prose, headings and lists; when nothing matches
+-- (tables, heavy math) the editor opens at the top.
+---@param source string
+---@param rendered_line string
+---@return integer lnum 1-based source line
+function M.source_line_for(source, rendered_line)
+  local want, any = {}, false
+  for w in rendered_line:gmatch("[%w\128-\255_]+") do
+    want[w:lower()] = true
+    any = true
+  end
+  if not any then
+    return 1
+  end
+  local best, best_score = 1, 0
+  for i, line in ipairs(vim.split(source, "\n", { plain = true })) do
+    local score = 0
+    for w in line:gmatch("[%w\128-\255_]+") do
+      if want[w:lower()] then
+        score = score + 1
+      end
+    end
+    if score > best_score then
+      best, best_score = i, score
+    end
+  end
+  return best
+end
+
+-- Markdown cells render rich; ACTIVATING one (<CR>/click, like any fibrous
+-- widget — there is no dedicated edit chord) opens split editing: the raw
+-- source in a REAL markdown buffer on the left (render="always", so it is
+-- visible and auto-focused, cursor on the source line matching the activated
+-- rendered line), a live rendered preview on the right (repainted from the
+-- buffer on every text change; dropped entirely while M.preview is off).
+-- Editing ends when the editor buffer loses focus — fibrous <Esc> back to
+-- the page, a jump elsewhere — and only then does the store take the text,
+-- like code cells take theirs at run. Management chords work here too; the
+-- <CR> CHORD just advances (Jupyter's run-on-markdown renders and moves on).
 local function MarkdownCell(ctx, props)
   M._probe.cell_renders = M._probe.cell_renders + 1
   local store, slot, cell = props.store, props.slot, props.cell
@@ -427,7 +477,7 @@ local function MarkdownCell(ctx, props)
     advance(store, cell)
   end
 
-  local function enter_editing()
+  local function enter_editing(rendered_line)
     live.set({})
     editing.set(true)
     -- land in the editor once this render's flush has opened its float
@@ -439,6 +489,9 @@ local function MarkdownCell(ctx, props)
       for _, win in ipairs(vim.api.nvim_list_wins()) do
         if vim.api.nvim_win_get_buf(win) == buf then
           vim.api.nvim_set_current_win(win)
+          if rendered_line then
+            pcall(vim.api.nvim_win_set_cursor, win, { M.source_line_for(cell.source, rendered_line), 0 })
+          end
           return
         end
       end
@@ -456,17 +509,12 @@ local function MarkdownCell(ctx, props)
     editing.set(false)
   end
 
-  -- Published per render so the buffer-local map (created once) always
-  -- calls the live closures — the playground's `entry.reload` pattern.
-  slot.md_toggle[cell.id] = function()
+  -- Published per render so the once-created WinLeave autocmd always calls
+  -- the live closures — the playground's `entry.reload` pattern.
+  slot.md_leave[cell.id] = function()
     if editing.get() then
       leave_editing()
-    else
-      enter_editing()
     end
-  end
-  keys[M.PREFIX .. "e"] = function()
-    slot.md_toggle[cell.id]()
   end
 
   if not editing.get() then
@@ -484,7 +532,17 @@ local function MarkdownCell(ctx, props)
     end
     return {
       comp = ui.col,
-      props = { on_key = keys, style = { padding = { x = 1 } } },
+      -- the whole cell is an activation target: <CR>/click opens the editor.
+      -- The current (root) line at press time is the activated RENDERED line,
+      -- which picks the source line the editor's cursor lands on.
+      props = {
+        on_key = keys,
+        role = "button",
+        on_press = function()
+          enter_editing(vim.api.nvim_get_current_line())
+        end,
+        style = { padding = { x = 1 } },
+      },
       children = { body },
     }
   end
@@ -501,42 +559,55 @@ local function MarkdownCell(ctx, props)
         end
       end,
     })
-    vim.keymap.set("n", M.PREFIX .. "e", function()
-      -- pop to the page first (fibrous <Esc>), then close the split
-      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "xt", false)
-      local t = slot.md_toggle[cell.id]
+    -- editing ends when focus leaves the editor. Scheduled with a re-check:
+    -- a transient window hop is back before the loop turns, so only a REAL
+    -- focus change away from the buffer closes the split.
+    vim.api.nvim_create_autocmd("WinLeave", {
+      buffer = buf,
+      callback = function()
+        vim.schedule(function()
+          if vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_get_current_buf() ~= buf then
+            local fn = slot.md_leave[cell.id]
+            if fn then
+              fn()
+            end
+          end
+        end)
+      end,
+    })
+    vim.keymap.set("n", M.PREFIX .. "p", function()
+      local t = slot.toggle_preview
       if t then
         t()
       end
-    end, { buffer = buf, desc = "jotdown: done editing markdown" })
+    end, { buffer = buf, desc = "jotdown: toggle markdown side previews" })
   end
   slot.live[cell.id] = function()
     live.set({ text = buf_text(buf) })
   end
 
+  -- one row either way, so the editor keeps its fiber (and float) across a
+  -- preview toggle; the preview pane is simply present or not
+  local panes = {
+    {
+      comp = ui.col,
+      props = { grow = 1 },
+      children = {
+        { comp = ui.raw_buffer, props = { bufnr = buf, render = "always", style = { border = true } } },
+      },
+    },
+  }
+  if props.preview then
+    panes[#panes + 1] = {
+      comp = ui.col,
+      props = { grow = 1, style = { border = true, padding = { x = 1 } } },
+      children = { { comp = ui.markdown, props = { text = live.get().text or cell.source } } },
+    }
+  end
   return {
     comp = ui.col,
     props = { on_key = keys },
-    children = {
-      {
-        comp = ui.row,
-        props = { gap = 1 },
-        children = {
-          {
-            comp = ui.col,
-            props = { grow = 1 },
-            children = {
-              { comp = ui.raw_buffer, props = { bufnr = buf, render = "always", style = { border = true } } },
-            },
-          },
-          {
-            comp = ui.col,
-            props = { grow = 1, style = { border = true, padding = { x = 1 } } },
-            children = { { comp = ui.markdown, props = { text = live.get().text or cell.source } } },
-          },
-        },
-      },
-    },
+    children = { { comp = ui.row, props = { gap = 1 }, children = panes } },
   }
 end
 
@@ -558,7 +629,17 @@ function M.Notebook(ctx, props)
   -- per-cell buffers live as long as the view; deleted with it
   local slot = ctx.use_ref(nil)
   if not slot.current then
-    slot.current = { bufs = {}, synced = {}, mapped = {}, md_mapped = {}, md_toggle = {}, live = {} }
+    slot.current = { bufs = {}, synced = {}, mapped = {}, md_mapped = {}, md_leave = {}, live = {} }
+  end
+
+  -- The markdown-preview flag lives on the module (jotdown-global); flipping
+  -- it re-renders THIS mount through a state bump. Published on the slot so
+  -- the buffer-local chord inside a focused cell float reaches the live
+  -- closure too.
+  local pv = ctx.use_state(0)
+  slot.current.toggle_preview = function()
+    M.preview = not M.preview
+    pv.set(pv.get() + 1)
   end
   ctx.use_effect(function()
     return function()
@@ -649,6 +730,7 @@ function M.Notebook(ctx, props)
         slot = slot.current,
         cell = cell,
         rev = cell.rev,
+        preview = M.preview, -- busts the memo when the global flag flips
         on_cell_write = props.on_cell_write,
       },
     }
@@ -656,7 +738,14 @@ function M.Notebook(ctx, props)
 
   return {
     comp = ui.col,
-    props = { grow = 1, gap = 1, style = { padding = { x = 1 } } },
+    props = {
+      grow = 1,
+      gap = 1,
+      style = { padding = { x = 1 } },
+      -- page-wide chords: on_key routes to the nearest carrier under the
+      -- cursor and nothing deeper carries prefix-p, so this fires anywhere
+      on_key = { [M.PREFIX .. "p"] = slot.current.toggle_preview },
+    },
     children = children,
   }
 end
