@@ -54,6 +54,20 @@ local STATE_ICON = {
   error = "✗",
 }
 
+-- The empty-cell placeholder: grayed AND italic. There is no stock group
+-- guaranteeing both, so borrow Comment's foreground and force the italic;
+-- `default` keeps a user/colorscheme override authoritative. Re-derived on
+-- ColorScheme because `:hi clear` wipes it.
+local function define_placeholder_hl()
+  local c = vim.api.nvim_get_hl(0, { name = "Comment", link = false })
+  vim.api.nvim_set_hl(0, "JotdownPlaceholder", { fg = c.fg, ctermfg = c.ctermfg, italic = true, default = true })
+end
+define_placeholder_hl()
+vim.api.nvim_create_autocmd("ColorScheme", {
+  group = vim.api.nvim_create_augroup("JotdownViewHl", {}),
+  callback = define_placeholder_hl,
+})
+
 ---------------------------------------------------------------------------
 -- Per-cell scratch buffers for code cells
 ---------------------------------------------------------------------------
@@ -456,21 +470,21 @@ local function MarkdownCell(ctx, props)
   end
 
   if not editing.get() then
-    -- bordered like a code cell's editor, and never zero-height: an empty
-    -- cell renders a placeholder so it stays hoverable — chords hit-test
-    -- against the border-box, so there must BE a box
+    -- borderless — markdown reads as prose on the page, no box chrome; but
+    -- never zero-height: an empty cell renders a placeholder so it stays
+    -- hoverable (chords hit-test against the cell's box, so there must BE one)
     local body
     if cell.source:find("%S") then
       body = { comp = ui.markdown, props = { text = cell.source } }
     else
       body = {
         comp = ui.text,
-        props = { text = "(empty markdown cell — edit with the e chord)", style = { text_hl = "Comment" } },
+        props = { text = "(empty markdown cell)", style = { text_hl = "JotdownPlaceholder" } },
       }
     end
     return {
       comp = ui.col,
-      props = { on_key = keys, style = { border = true, padding = { x = 1 } } },
+      props = { on_key = keys, style = { padding = { x = 1 } } },
       children = { body },
     }
   end

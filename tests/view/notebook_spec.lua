@@ -340,16 +340,19 @@ describe("view.notebook", function()
     notebook.configure({ prefix = "<C-j>" })
   end)
 
-  it("markdown cells are bordered, and an empty one stays targetable", function()
+  it("markdown cells are borderless, and an empty one stays targetable", function()
     local st = new_pair()
     local a = st:insert_cell(1, { type = "markdown", source = "" })
     local handle = mount_nb(st)
 
-    -- an empty cell must still occupy space: a border plus a placeholder,
-    -- otherwise it renders zero rows and no chord can ever target it
+    -- no border box — markdown reads as prose on the page; but an empty cell
+    -- must still occupy space (an italic grayed placeholder), otherwise it
+    -- renders zero rows and no chord can ever target it
     local text = text_of(handle.bufnr)
-    assert.truthy(text:find("╭", 1, true))
-    assert.truthy(text:find("empty markdown", 1, true))
+    assert.falsy(text:find("╭", 1, true))
+    assert.truthy(text:find("(empty markdown cell)", 1, true))
+    local hl = vim.api.nvim_get_hl(0, { name = "JotdownPlaceholder" })
+    assert.is_true(hl.italic == true)
 
     -- and the chords reach it: e opens the editor on the empty cell
     press_at(handle, "empty markdown", notebook.PREFIX .. "e")
@@ -358,14 +361,13 @@ describe("view.notebook", function()
     assert.truthy(editor ~= handle.bufnr)
     assert.equal("markdown", vim.bo[editor].filetype)
 
-    -- leave editing with some text: the cell renders it, still bordered
+    -- leave editing with some text: the cell renders it, the placeholder gone
     vim.api.nvim_buf_set_lines(editor, 0, -1, false, { "now with prose" })
     vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(notebook.PREFIX .. "e", true, false, true), "xt", false)
     vim.wait(50)
     assert.equal("now with prose", st:cell(a).source)
     text = text_of(handle.bufnr)
     assert.truthy(text:find("now with prose", 1, true))
-    assert.truthy(text:find("╭", 1, true))
     assert.falsy(text:find("empty markdown", 1, true))
     handle.unmount()
   end)
