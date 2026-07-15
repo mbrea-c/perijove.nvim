@@ -1,9 +1,9 @@
--- jotdown — a Jupyter notebook frontend for Neovim, built on fibrous.
+-- perijove — a Jupyter notebook frontend for Neovim, built on fibrous.
 --
 -- Architecture (see README.md): a fibrous document UI over a store that
 -- consumes an abstract kernel client; the shipped client speaks the Jupyter
 -- Server REST + websocket API through a pluggable wire transport
--- (jotdown.transport). Local and remote (e.g. SageMaker) differ only in the
+-- (perijove.transport). Local and remote (e.g. SageMaker) differ only in the
 -- base URL and an auth provider.
 
 local M = {}
@@ -15,25 +15,25 @@ local config = {
   tools = {},
   -- mount the notebook UI automatically when a .ipynb file is opened
   auto_open = true,
-  -- every jotdown bind is a chord under this prefix
+  -- every perijove bind is a chord under this prefix
   prefix = "<C-j>",
 }
 
 function M.setup(opts)
   config = vim.tbl_deep_extend("force", config, opts or {})
-  require("jotdown.tools").configure(config.tools)
-  require("jotdown.view.notebook").configure({ prefix = config.prefix })
+  require("perijove.tools").configure(config.tools)
+  require("perijove.view.notebook").configure({ prefix = config.prefix })
 
-  local notebook_file = require("jotdown.notebook_file")
+  local notebook_file = require("perijove.notebook_file")
   notebook_file.setup_autocmds(config.auto_open)
-  vim.api.nvim_create_user_command("Jotdown", function()
+  vim.api.nvim_create_user_command("Perijove", function()
     local bufnr = vim.api.nvim_get_current_buf()
     if notebook_file._sessions[bufnr] then
       notebook_file.toggle(bufnr)
     else
       notebook_file.open(bufnr)
     end
-  end, { desc = "jotdown: open or toggle the notebook UI for this buffer" })
+  end, { desc = "perijove: open or toggle the notebook UI for this buffer" })
 
   return config
 end
@@ -41,7 +41,7 @@ end
 -- The configured wire transport (constructed fresh per call; connections own
 -- their transport instance).
 function M.transport()
-  return require("jotdown.transport").create(config.transport, config)
+  return require("perijove.transport").create(config.transport, config)
 end
 
 return M

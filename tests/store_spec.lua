@@ -2,7 +2,7 @@
 -- (idle -> queued -> running -> ok/error), the serial execution queue, and
 -- output accumulation — all pure Lua, driven here through a fake client.
 
-local store = require("jotdown.store")
+local store = require("perijove.store")
 local fake_client = require("tests.fake_client")
 
 local function new_pair()

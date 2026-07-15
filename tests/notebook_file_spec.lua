@@ -4,7 +4,7 @@
 -- toggles down to the raw JSON and back. Driven with a fake client, so no
 -- kernel is involved (and none may be: opening must never boot one).
 
-local notebook_file = require("jotdown.notebook_file")
+local notebook_file = require("perijove.notebook_file")
 local fake_client = require("tests.fake_client")
 
 local FIXTURE = vim.json.encode({

@@ -1,4 +1,4 @@
-# jotdown.nvim — agent notes
+# perijove.nvim — agent notes
 
 A Jupyter notebook frontend for Neovim, built on fibrous. Read README.md for
 the architecture; this file records the working conventions.
@@ -31,13 +31,13 @@ neighbors:
    client used by tests/demo, the real server client, and a hypothetical
    jupyter_client python sidecar all implement THIS. Nothing above it may
    know how kernels are reached.
-2. **wire transport** (`lua/jotdown/transport/`) — `request()` + `ws_open()`,
+2. **wire transport** (`lua/perijove/transport/`) — `request()` + `ws_open()`,
    implementations registered by name in `transport/init.lua`. No Jupyter
    knowledge at or below this line: transports move bytes. The default
    `curl-websocat` implementation shells out; a pure-Lua vim.uv transport
    would register alongside it.
 
-External binaries are resolved through `lua/jotdown/tools.lua` ONLY — never
+External binaries are resolved through `lua/perijove/tools.lua` ONLY — never
 call `curl`/`websocat` by bare name elsewhere. The nix build substitutes
 store paths into that file (flake.nix postPatch), which is what makes the
 packaged plugin reproducible; keep the `@curl@`/`@websocat@` placeholders

@@ -3,7 +3,7 @@
 -- transport — canned REST responses, a capturing websocket — so the whole
 -- client is exercised with no network, no processes.
 
-local server = require("jotdown.client.server")
+local server = require("perijove.client.server")
 
 ---------------------------------------------------------------------------
 -- A fake wire transport: REST answered from a routes table, ws captured.

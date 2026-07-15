@@ -16,7 +16,7 @@ local NIX = {
 
 local overrides = {}
 
--- Called from jotdown.setup with opts.tools; replaces the whole override set
+-- Called from perijove.setup with opts.tools; replaces the whole override set
 -- so tests (and repeated setup calls) stay order-independent.
 function M.configure(tbl)
   overrides = tbl or {}

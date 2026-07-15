@@ -43,13 +43,13 @@ function M.create(name, opts)
   name = name or M.default
   local factory = registry[name]
   if not factory then
-    error(("jotdown: unknown transport %q (registered: %s)"):format(name, table.concat(vim.tbl_keys(registry), ", ")))
+    error(("perijove: unknown transport %q (registered: %s)"):format(name, table.concat(vim.tbl_keys(registry), ", ")))
   end
   return factory(opts or {})
 end
 
 M.register("curl-websocat", function(opts)
-  return require("jotdown.transport.curl_websocat").new(opts)
+  return require("perijove.transport.curl_websocat").new(opts)
 end)
 
 return M

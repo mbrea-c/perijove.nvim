@@ -2,7 +2,7 @@
 -- placeholders with absolute store paths; a source checkout falls back to
 -- PATH names; explicit configuration beats both.
 
-local tools = require("jotdown.tools")
+local tools = require("perijove.tools")
 
 describe("tools.path", function()
   after_each(function()

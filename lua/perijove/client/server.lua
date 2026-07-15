@@ -1,5 +1,5 @@
 -- The Jupyter Server kernel client: implements the kernel-client contract
--- (jotdown.client) against the server's REST + websocket API — the same
+-- (perijove.client) against the server's REST + websocket API — the same
 -- surface JupyterLab uses — through the pluggable wire transport. Local and
 -- remote kernels differ only in base_url + auth; nothing here knows curl
 -- from websocat.
@@ -9,7 +9,7 @@
 -- then sends channel-tagged protocol envelopes and the correlator routes the
 -- kernel's replies back to the store's handlers.
 
-local protocol = require("jotdown.protocol")
+local protocol = require("perijove.protocol")
 
 local M = {}
 
@@ -24,11 +24,11 @@ function M.new(opts)
     base_url = opts.base_url:gsub("/$", ""),
     token = opts.token,
     kernel_name = opts.kernel_name or "python3",
-    name = opts.name or "jotdown",
-    path = opts.path or "jotdown.ipynb",
+    name = opts.name or "perijove",
+    path = opts.path or "perijove.ipynb",
     -- our session id on the wire: ties every message we send together so
     -- other frontends on the same kernel can tell our traffic apart
-    session = ("jotdown-%d-%d"):format(vim.uv.os_getpid(), vim.uv.hrtime()),
+    session = ("perijove-%d-%d"):format(vim.uv.os_getpid(), vim.uv.hrtime()),
     _kernel_handlers = {},
     _corr = nil,
     _conn = nil,
@@ -97,7 +97,7 @@ function Client:connect(cb)
         end
       end,
       on_error = function(err)
-        vim.notify("jotdown: kernel channel error: " .. tostring(err), vim.log.levels.WARN)
+        vim.notify("perijove: kernel channel error: " .. tostring(err), vim.log.levels.WARN)
       end,
     })
     -- a fresh kernel is idle; without this the store's status line reads

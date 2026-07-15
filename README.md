@@ -1,4 +1,4 @@
-# jotdown.nvim
+# perijove.nvim
 
 A Jupyter notebook frontend for Neovim, built on
 [fibrous](https://github.com/mbrea-c/fibrous.nvim). Early days: the transport
@@ -8,11 +8,11 @@ being built on top of it.
 ## Architecture
 
 Jupyter separates frontend, middle layer, and kernel — the kernel never sees
-the notebook document, only code strings. jotdown is a frontend that speaks to
+the notebook document, only code strings. perijove is a frontend that speaks to
 the official middle layer, **Jupyter Server's REST + websocket API** (the same
 surface JupyterLab uses), so local and remote kernels are one code path:
 
-- **local**: jotdown spawns `jupyter server` itself and connects over
+- **local**: perijove spawns `jupyter server` itself and connects over
   localhost with token auth;
 - **remote** (a GPU box, SageMaker, ...): same client pointed at a remote base
   URL, credentials supplied by a pluggable auth provider. The `.ipynb` stays
@@ -29,16 +29,16 @@ Layers, top to bottom, with the two swap points marked:
     |                       pure-Lua vim.uv implementation
     curl / websocat      (HTTP(S) / stdio<->wss bridge; dumb pipes)
 
-The **wire transport** (`lua/jotdown/transport/`) is the narrow interface —
+The **wire transport** (`lua/perijove/transport/`) is the narrow interface —
 `request()` for HTTP, `ws_open()` for channels — with implementations
 registered by name. The default shells out to curl and websocat; the nix
-package pins both by store path (see `lua/jotdown/tools.lua`), so the packaged
+package pins both by store path (see `lua/perijove/tools.lua`), so the packaged
 plugin never depends on `$PATH`.
 
 ## Using it
 
 `setup()` registers the entrypoints: opening a `.ipynb` mounts the notebook
-UI over that window (`auto_open = false` to opt out; `:Jotdown` opens or
+UI over that window (`auto_open = false` to opt out; `:Perijove` opens or
 toggles by hand). The kernel is LAZY — nothing boots until the first run.
 
 Saving rides vim's own file semantics: `:w` — on the notebook, inside a
@@ -53,7 +53,7 @@ trip, and raw-JSON edits win by re-parse on the way back up.
 ## UI plan (decided so far)
 
 - Keybinds: ONE prefix — `<C-j>`, configurable via `setup({ prefix = ... })`
-  — and every jotdown bind is a chord under it, the weave
+  — and every perijove bind is a chord under it, the weave
   `<leader><leader>` principle. Stock normal-mode `<C-j>` is `<NL>`, a
   synonym for `j`, so nothing native is lost; the known conflict is user
   window-nav maps on `<C-hjkl>`. Per-cell chords work over the page

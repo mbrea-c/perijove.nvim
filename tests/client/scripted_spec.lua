@@ -3,7 +3,7 @@
 -- developed and demoed with zero protocol code. Time is injected (opts.defer)
 -- so these specs pump it by hand; the demo uses vim.defer_fn.
 
-local scripted = require("jotdown.client.scripted")
+local scripted = require("perijove.client.scripted")
 
 -- A client wired to a hand-cranked clock. Returns the client, a pump that
 -- fires every scheduled step in order, and the recorded kernel statuses.

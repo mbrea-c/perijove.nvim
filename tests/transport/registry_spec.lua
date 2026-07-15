@@ -2,7 +2,7 @@
 -- name, consumers construct by name (or hand in an instance directly), and
 -- "curl-websocat" ships as the default.
 
-local transport = require("jotdown.transport")
+local transport = require("perijove.transport")
 
 describe("transport registry", function()
   it("ships curl-websocat as the registered default", function()

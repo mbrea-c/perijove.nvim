@@ -2,7 +2,7 @@
 -- Everything that can be pure IS pure — argv construction, response parsing,
 -- stream line-splitting — so the suite covers it without network or processes.
 
-local cw = require("jotdown.transport.curl_websocat")
+local cw = require("perijove.transport.curl_websocat")
 
 describe("curl_websocat", function()
   describe("curl_args", function()

@@ -1,5 +1,5 @@
 -- A hand-cranked fake kernel client for store/UI specs: satisfies the
--- kernel-client contract (see lua/jotdown/client/init.lua) but executes
+-- kernel-client contract (see lua/perijove/client/init.lua) but executes
 -- nothing — each execute() is parked in .executions so the spec drives the
 -- handler callbacks itself, in exactly the order it wants to test.
 

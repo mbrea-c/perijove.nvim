@@ -26,26 +26,26 @@ package.path = table.concat({
 }, ";")
 
 if vim.fn.executable("jupyter-server") == 0 then
-  io.write("jotdown demo-real: jupyter-server not on PATH — use `nix run .#demo-real`\n")
+  io.write("perijove demo-real: jupyter-server not on PATH — use `nix run .#demo-real`\n")
   vim.cmd("cquit 1")
 end
 
 local nr = require("fibrous")
-local store = require("jotdown.store")
-local localserver = require("jotdown.localserver")
-local transport = require("jotdown.transport")
-local server_client = require("jotdown.client.server")
-local notebook = require("jotdown.view.notebook")
+local store = require("perijove.store")
+local localserver = require("perijove.localserver")
+local transport = require("perijove.transport")
+local server_client = require("perijove.client.server")
+local notebook = require("perijove.view.notebook")
 local seed = require("demo.seed")
 
 -- Boot: spawn + ready-poll + session create, blocking (a couple of seconds)
 -- with progress on the way. The plugin proper will do this async behind a
 -- "starting kernel…" status; a demo can afford to be simple.
-print("jotdown: starting local jupyter server…")
+print("perijove: starting local jupyter server…")
 local srv = localserver.spawn()
 local wire = transport.create(nil, {})
 if not localserver.wait_ready(srv, wire, 60000) then
-  io.write("jotdown demo-real: jupyter server did not come up\n")
+  io.write("perijove demo-real: jupyter server did not come up\n")
   vim.cmd("cquit 1")
 end
 
@@ -56,7 +56,7 @@ local client = server_client.new({
 })
 local st = store.new(client)
 
-print("jotdown: starting kernel…")
+print("perijove: starting kernel…")
 local connect_err, connected
 client:connect(function(e)
   connect_err, connected = e, true
@@ -65,7 +65,7 @@ vim.wait(30000, function()
   return connected
 end, 100)
 if not connected or connect_err then
-  io.write("jotdown demo-real: connect failed: " .. tostring(connect_err) .. "\n")
+  io.write("perijove demo-real: connect failed: " .. tostring(connect_err) .. "\n")
   vim.cmd("cquit 1")
 end
 
@@ -77,19 +77,19 @@ handle.focus()
 local prefix = notebook.PREFIX
 vim.keymap.set("n", prefix .. "a", function()
   st:run_all()
-end, { desc = "jotdown: run all cells" })
+end, { desc = "perijove: run all cells" })
 vim.keymap.set("n", prefix .. "i", function()
   st:interrupt()
-end, { desc = "jotdown: interrupt the kernel" })
+end, { desc = "perijove: interrupt the kernel" })
 vim.keymap.set("n", prefix .. "R", function()
   st:restart()
-end, { desc = "jotdown: restart the kernel" })
+end, { desc = "perijove: restart the kernel" })
 vim.keymap.set("n", prefix .. "x", function()
   st:clear_all_outputs()
-end, { desc = "jotdown: clear all outputs" })
+end, { desc = "perijove: clear all outputs" })
 vim.keymap.set("n", prefix .. "q", function()
   vim.cmd("qa!")
-end, { desc = "jotdown: quit the demo" })
+end, { desc = "perijove: quit the demo" })
 
 -- Leave nothing behind: end the session (kills the kernel) and stop the
 -- server on the way out, however the user quits.

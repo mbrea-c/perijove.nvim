@@ -1,5 +1,5 @@
 {
-  description = "jotdown — a Jupyter notebook frontend for Neovim, built on fibrous";
+  description = "perijove — a Jupyter notebook frontend for Neovim, built on fibrous";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -37,19 +37,19 @@
       #     managers (home-manager, nixvim, ...) put it on the runtimepath
       #     automatically;
       #   - the wire transport's external tools (curl, websocat) are PINNED:
-      #     postPatch substitutes their store paths into lua/jotdown/tools.lua,
+      #     postPatch substitutes their store paths into lua/perijove/tools.lua,
       #     closing the plugin over the exact binaries it was tested with. No
       #     PATH lookups at runtime, fully reproducible. (A source checkout
       #     keeps the placeholders and falls back to PATH — see tools.lua.)
       packages = forAllSystems (pkgs: rec {
-        default = jotdown;
-        jotdown = pkgs.vimUtils.buildVimPlugin {
-          pname = "jotdown";
+        default = perijove;
+        perijove = pkgs.vimUtils.buildVimPlugin {
+          pname = "perijove";
           version = self.shortRev or self.dirtyShortRev or "dev";
           src = self;
           dependencies = [ fibrous.packages.${pkgs.stdenv.hostPlatform.system}.default ];
           postPatch = ''
-            substituteInPlace lua/jotdown/tools.lua \
+            substituteInPlace lua/perijove/tools.lua \
               --replace-fail "@curl@" "${pkgs.curl}" \
               --replace-fail "@websocat@" "${pkgs.websocat}"
           '';
@@ -80,17 +80,17 @@
         in
         rec {
           default = demo;
-          test = app "jotdown-test" (wireTools pkgs ++ [ (jupyterEnv pkgs) ]) ''
+          test = app "perijove-test" (wireTools pkgs ++ [ (jupyterEnv pkgs) ]) ''
             export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
             cd ${self}
             exec nvim --headless -u NONE -i NONE -l tests/run.lua "$@"
           '';
-          demo = app "jotdown-demo" [ ] ''
+          demo = app "perijove-demo" [ ] ''
             export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
             exec nvim --clean -u ${self}/demo/init.lua
           '';
           # the same notebook over a REAL local jupyter kernel
-          demo-real = app "jotdown-demo-real" (wireTools pkgs ++ [ (jupyterEnv pkgs) ]) ''
+          demo-real = app "perijove-demo-real" (wireTools pkgs ++ [ (jupyterEnv pkgs) ]) ''
             export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
             exec nvim --clean -u ${self}/demo/real.lua
           '';
@@ -120,7 +120,7 @@
       # the pinned jupyter-server + ipykernel.
       checks = forAllSystems (pkgs: {
         tests =
-          pkgs.runCommandLocal "jotdown-tests"
+          pkgs.runCommandLocal "perijove-tests"
             {
               nativeBuildInputs = [
                 pkgs.neovim

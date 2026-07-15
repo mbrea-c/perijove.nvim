@@ -1,4 +1,4 @@
--- The .ipynb entrypoint: a notebook file's buffer gets the jotdown UI
+-- The .ipynb entrypoint: a notebook file's buffer gets the perijove UI
 -- mounted over its window, and vim's own file semantics keep working
 -- (design decided 2026-07-13):
 --
@@ -17,10 +17,10 @@
 --           kernel survives even that).
 
 local nr = require("fibrous")
-local ipynb = require("jotdown.ipynb")
-local store_mod = require("jotdown.store")
-local notebook = require("jotdown.view.notebook")
-local lazy = require("jotdown.client.lazy")
+local ipynb = require("perijove.ipynb")
+local store_mod = require("perijove.store")
+local notebook = require("perijove.view.notebook")
+local lazy = require("perijove.client.lazy")
 
 local M = {}
 
@@ -36,10 +36,10 @@ local function local_factory(sess)
       cb("jupyter-server not on PATH (nix develop provides it)")
       return
     end
-    local localserver = require("jotdown.localserver")
-    local transport = require("jotdown.transport")
-    local server_client = require("jotdown.client.server")
-    local wire = require("jotdown").transport() or transport.create(nil, {})
+    local localserver = require("perijove.localserver")
+    local transport = require("perijove.transport")
+    local server_client = require("perijove.client.server")
+    local wire = require("perijove").transport() or transport.create(nil, {})
     local srv = localserver.spawn()
     sess.srv = srv
     -- readiness polling blocks briefly (pumping the loop); async polling is
@@ -73,7 +73,7 @@ end
 ---------------------------------------------------------------------------
 
 local function chord(buf, key, fn, desc)
-  vim.keymap.set("n", notebook.PREFIX .. key, fn, { buffer = buf, desc = "jotdown: " .. desc })
+  vim.keymap.set("n", notebook.PREFIX .. key, fn, { buffer = buf, desc = "perijove: " .. desc })
 end
 
 -- Mount the view for `sess`. With `cells` given, a fresh store is built
@@ -251,7 +251,7 @@ end
 
 -- Session-wide cleanup: kill every kernel/server on the way out.
 function M.setup_autocmds(auto_open)
-  local group = vim.api.nvim_create_augroup("JotdownNotebookFile", { clear = true })
+  local group = vim.api.nvim_create_augroup("PerijoveNotebookFile", { clear = true })
   if auto_open then
     vim.api.nvim_create_autocmd("BufReadPost", {
       group = group,

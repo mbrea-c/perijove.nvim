@@ -1,7 +1,7 @@
 -- The default wire transport: curl for HTTP(S), websocat as a stdio<->wss
 -- bridge. Both are dumb pipes — every scrap of Jupyter knowledge lives above
 -- the transport boundary (see transport/init.lua). Both binaries are pinned
--- by the nix package through jotdown.tools, so the packaged plugin never
+-- by the nix package through perijove.tools, so the packaged plugin never
 -- depends on the user's PATH.
 --
 -- Everything that can be pure IS pure — argv construction, response parsing,
@@ -9,7 +9,7 @@
 -- processes or touching the network. The vim.system glue at the bottom is
 -- deliberately the thinnest possible layer over those pure functions.
 
-local tools = require("jotdown.tools")
+local tools = require("perijove.tools")
 
 local M = {}
 

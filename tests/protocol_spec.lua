@@ -3,7 +3,7 @@
 -- correlator that routes decoded incoming messages to per-execution handlers
 -- by parent_header.msg_id.
 
-local protocol = require("jotdown.protocol")
+local protocol = require("perijove.protocol")
 
 describe("protocol.envelope", function()
   it("builds a v5.3 message with fresh ids and the channel tag", function()

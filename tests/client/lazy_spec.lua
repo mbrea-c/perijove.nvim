@@ -3,7 +3,7 @@
 -- factory) when the first execute arrives. Opening a notebook must never
 -- spawn a jupyter server.
 
-local lazy = require("jotdown.client.lazy")
+local lazy = require("perijove.client.lazy")
 local fake_client = require("tests.fake_client")
 
 -- a factory the spec controls: captures the ready callback so connection

@@ -13,7 +13,7 @@ local root = vim.fn.getcwd()
 -- with user config. Fibrous comes from FIBROUS_PATH when set (`nix run .#test`
 -- points it at the pinned flake input) and the sibling checkout otherwise.
 local fibrous = vim.env.FIBROUS_PATH or (root .. "/../fibrous.nvim")
--- Neovim's runtimepath loader beats package.path, so a fibrous (or jotdown)
+-- Neovim's runtimepath loader beats package.path, so a fibrous (or perijove)
 -- installed in the running nvim (e.g. a nix vim-pack-dir) would silently
 -- shadow the trees under test. Prepend them so the suite tests THESE.
 vim.opt.runtimepath:prepend(fibrous)

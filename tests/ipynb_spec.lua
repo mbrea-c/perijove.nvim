@@ -4,7 +4,7 @@
 -- The emitted JSON matches nbformat's own style — sorted keys, indent 1 — so
 -- diffs against jupyter-touched files stay minimal.
 
-local ipynb = require("jotdown.ipynb")
+local ipynb = require("perijove.ipynb")
 
 local FIXTURE = [[
 {

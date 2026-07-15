@@ -5,9 +5,9 @@
 
 local mount = require("fibrous.inline.mount")
 
-local store = require("jotdown.store")
+local store = require("perijove.store")
 local fake_client = require("tests.fake_client")
-local notebook = require("jotdown.view.notebook")
+local notebook = require("perijove.view.notebook")
 
 local function trimmed(bufnr)
   local out = {}
@@ -165,7 +165,7 @@ describe("view.notebook", function()
     -- the cell buffer is a named acwrite buffer: :w works and routes to us
     local cellbuf
     for _, b in ipairs(vim.api.nvim_list_bufs()) do
-      if vim.api.nvim_buf_get_name(b):find("jotdown://", 1, true) then
+      if vim.api.nvim_buf_get_name(b):find("perijove://", 1, true) then
         cellbuf = b
       end
     end
@@ -351,7 +351,7 @@ describe("view.notebook", function()
     local text = text_of(handle.bufnr)
     assert.falsy(text:find("╭", 1, true))
     assert.truthy(text:find("(empty markdown cell)", 1, true))
-    local hl = vim.api.nvim_get_hl(0, { name = "JotdownPlaceholder" })
+    local hl = vim.api.nvim_get_hl(0, { name = "PerijovePlaceholder" })
     assert.is_true(hl.italic == true)
 
     -- and activation reaches it: <CR> on the placeholder opens the editor

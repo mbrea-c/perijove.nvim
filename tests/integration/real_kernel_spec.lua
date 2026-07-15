@@ -9,9 +9,9 @@ if vim.fn.executable("jupyter-server") == 0 then
   return
 end
 
-local localserver = require("jotdown.localserver")
-local transport_mod = require("jotdown.transport")
-local server_client = require("jotdown.client.server")
+local localserver = require("perijove.localserver")
+local transport_mod = require("perijove.transport")
+local server_client = require("perijove.client.server")
 
 describe("integration: real kernel", function()
   it("executes code end to end: stream, result, error, interrupt-free done", function()

@@ -1,5 +1,5 @@
 -- The .ipynb (nbformat 4) round trip. Decode produces store-shaped cells
--- plus preserved bookkeeping; encode rewrites ONLY what jotdown owns (cell
+-- plus preserved bookkeeping; encode rewrites ONLY what perijove owns (cell
 -- sources, outputs, execution counts) and carries everything else through
 -- verbatim — cell ids, metadata, attachments, unknown fields, nbformat
 -- versions. Output style matches nbformat's own json.dumps(indent=1,
@@ -159,7 +159,7 @@ end
 -- The document
 ---------------------------------------------------------------------------
 
--- What jotdown owns per cell; everything else is bookkeeping to carry.
+-- What perijove owns per cell; everything else is bookkeeping to carry.
 local OWNED = { cell_type = true, source = true, outputs = true, execution_count = true }
 
 -- decode(text) -> { meta, cells }: meta is the top-level notebook table

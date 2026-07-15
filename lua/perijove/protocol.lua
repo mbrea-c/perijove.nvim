@@ -19,7 +19,7 @@ local counter = 0
 local function msg_id()
   counter = counter + 1
   -- unique per process run; the kernel only reflects these back
-  return ("jotdown-%d-%d-%d"):format(vim.uv.os_getpid(), vim.uv.hrtime(), counter)
+  return ("perijove-%d-%d-%d"):format(vim.uv.os_getpid(), vim.uv.hrtime(), counter)
 end
 
 -- A wire-ready message table: vim.json.encode(envelope(...)) is the frame.
@@ -28,7 +28,7 @@ function M.envelope(msg_type, content, opts)
   return {
     header = {
       msg_id = msg_id(),
-      username = "jotdown",
+      username = "perijove",
       session = opts.session,
       msg_type = msg_type,
       version = "5.3",

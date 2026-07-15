@@ -21,7 +21,7 @@ local targets = require("fibrous.targets")
 
 local M = {}
 
--- The keybind principle (see README): ONE prefix, every jotdown bind is a
+-- The keybind principle (see README): ONE prefix, every perijove bind is a
 -- chord under it, nothing else is touched. Stock <C-j> in normal mode is
 -- <NL>, a synonym for `j` — free to steal; setup({ prefix = ... }) rebinds.
 M.PREFIX = "<C-j>"
@@ -47,7 +47,7 @@ function M.configure(opts)
 end
 M.configure({})
 
--- Side previews for markdown-cell editing, jotdown-global: the prefix-p
+-- Side previews for markdown-cell editing, perijove-global: the prefix-p
 -- chord flips it from anywhere in a notebook (page or focused cell float).
 -- Off = editing is the source buffer alone. Defaults to enabled.
 M.preview = true
@@ -66,11 +66,11 @@ local STATE_ICON = {
 -- ColorScheme because `:hi clear` wipes it.
 local function define_placeholder_hl()
   local c = vim.api.nvim_get_hl(0, { name = "Comment", link = false })
-  vim.api.nvim_set_hl(0, "JotdownPlaceholder", { fg = c.fg, ctermfg = c.ctermfg, italic = true, default = true })
+  vim.api.nvim_set_hl(0, "PerijovePlaceholder", { fg = c.fg, ctermfg = c.ctermfg, italic = true, default = true })
 end
 define_placeholder_hl()
 vim.api.nvim_create_autocmd("ColorScheme", {
-  group = vim.api.nvim_create_augroup("JotdownViewHl", {}),
+  group = vim.api.nvim_create_augroup("PerijoveViewHl", {}),
   callback = define_placeholder_hl,
 })
 
@@ -90,7 +90,7 @@ local function ensure_buf(slot, cell, on_cell_write, ft)
     vim.bo[buf].bufhidden = "hide"
     if on_cell_write then
       vim.bo[buf].buftype = "acwrite"
-      vim.api.nvim_buf_set_name(buf, ("jotdown://%d/cell/%s"):format(buf, cell.id))
+      vim.api.nvim_buf_set_name(buf, ("perijove://%d/cell/%s"):format(buf, cell.id))
       vim.api.nvim_create_autocmd("BufWriteCmd", {
         buffer = buf,
         callback = function()
@@ -208,7 +208,7 @@ end
 -- non-button roles; the only visible effect is hover on the marker, which is
 -- honest — it IS a jump target).
 local function anchor_role(id)
-  return "jotdown:cell:" .. id
+  return "perijove:cell:" .. id
 end
 
 -- Land the cursor on cell `id`'s header anchor in `win` (the mount's root
@@ -343,7 +343,7 @@ local function CodeCell(_, props)
   -- never happen under a float that is being torn down.
   if not slot.mapped[cell.id] then
     slot.mapped[cell.id] = true
-    vim.keymap.set("n", M.PREFIX .. "r", run, { buffer = buf, desc = "jotdown: run this cell" })
+    vim.keymap.set("n", M.PREFIX .. "r", run, { buffer = buf, desc = "perijove: run this cell" })
     -- the preview toggle is notebook-global, so it works from inside a
     -- focused code cell too (in place, no Esc-pop needed)
     vim.keymap.set("n", M.PREFIX .. "p", function()
@@ -351,13 +351,13 @@ local function CodeCell(_, props)
       if t then
         t()
       end
-    end, { buffer = buf, desc = "jotdown: toggle markdown side previews" })
+    end, { buffer = buf, desc = "perijove: toggle markdown side previews" })
     for lhs, fn in pairs(keys) do
       if lhs ~= M.PREFIX .. "r" then
         vim.keymap.set("n", lhs, function()
           vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "xt", false)
           fn()
-        end, { buffer = buf, desc = "jotdown: cell chord" })
+        end, { buffer = buf, desc = "perijove: cell chord" })
       end
     end
   end
@@ -527,7 +527,7 @@ local function MarkdownCell(ctx, props)
     else
       body = {
         comp = ui.text,
-        props = { text = "(empty markdown cell)", style = { text_hl = "JotdownPlaceholder" } },
+        props = { text = "(empty markdown cell)", style = { text_hl = "PerijovePlaceholder" } },
       }
     end
     return {
@@ -580,7 +580,7 @@ local function MarkdownCell(ctx, props)
       if t then
         t()
       end
-    end, { buffer = buf, desc = "jotdown: toggle markdown side previews" })
+    end, { buffer = buf, desc = "perijove: toggle markdown side previews" })
   end
   slot.live[cell.id] = function()
     live.set({ text = buf_text(buf) })
@@ -632,7 +632,7 @@ function M.Notebook(ctx, props)
     slot.current = { bufs = {}, synced = {}, mapped = {}, md_mapped = {}, md_leave = {}, live = {} }
   end
 
-  -- The markdown-preview flag lives on the module (jotdown-global); flipping
+  -- The markdown-preview flag lives on the module (perijove-global); flipping
   -- it re-renders THIS mount through a state bump. Published on the slot so
   -- the buffer-local chord inside a focused cell float reaches the live
   -- closure too.

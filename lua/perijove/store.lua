@@ -3,7 +3,7 @@
 -- (idle -> queued -> running -> ok/error), the SERIAL execution queue (one
 -- execute in flight, ever — the store, not the kernel, owns ordering), and
 -- output accumulation. Pure Lua over the kernel-client contract
--- (jotdown.client), so the whole thing is spec-driven with a fake client.
+-- (perijove.client), so the whole thing is spec-driven with a fake client.
 --
 -- Cells are plain tables:
 --   { id, type = "code"|"markdown", source, outputs = {}, state,

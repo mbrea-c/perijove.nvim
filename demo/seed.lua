@@ -9,7 +9,7 @@ function M.fill(st)
   st:insert_cell(1, {
     type = "markdown",
     source = table.concat({
-      "# jotdown demo",
+      "# perijove demo",
       "",
       "A notebook in Neovim. Markdown cells render rich, math included:",
       "$e^{i\\pi} + 1 = 0$, and display math too:",
@@ -19,7 +19,7 @@ function M.fill(st)
       "$$",
       "",
       "Code cells are real python buffers — enter one with `<CR>` or `i`,",
-      "edit it, step out with `hjkl` at the edge. Every jotdown bind is a",
+      "edit it, step out with `hjkl` at the edge. Every perijove bind is a",
       "chord under `<C-j>`:",
       "",
       "- `r` run the hovered cell · `<CR>` run and advance",
