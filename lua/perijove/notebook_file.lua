@@ -21,51 +21,97 @@ local ipynb = require("perijove.ipynb")
 local store_mod = require("perijove.store")
 local notebook = require("perijove.view.notebook")
 local lazy = require("perijove.client.lazy")
+local connections = require("perijove.connections")
+local project = require("perijove.connections.project")
 
 local M = {}
 
 M._sessions = {} -- file bufnr -> sess
 
 ---------------------------------------------------------------------------
--- Kernel factory: the local-jupyter default (config hooks come later)
+-- Kernel factory: boot the session's EFFECTIVE connection on the first run
 ---------------------------------------------------------------------------
 
-local function local_factory(sess)
+-- The session `bufnr` belongs to: the notebook FILE buffer (the session
+-- key), or the mounted view buffer the cursor actually lives in.
+function M.session_of(bufnr)
+  if M._sessions[bufnr] then
+    return M._sessions[bufnr]
+  end
+  for _, sess in pairs(M._sessions) do
+    if sess.handle and sess.handle.bufnr == bufnr then
+      return sess
+    end
+  end
+end
+
+-- The effective connection name for a notebook: explicitly selected >
+-- perijove.json default > global default (setup or set_default) > "local".
+function M.connection_of(bufnr)
+  local sess = M.session_of(bufnr)
+  if not sess then
+    return nil
+  end
+  return sess.connection or connections.view(sess.project).default()
+end
+
+local function connection_factory(sess)
   return function(cb)
-    if vim.fn.executable("jupyter-server") == 0 then
-      cb("jupyter-server not on PATH (nix develop provides it)")
+    local name = M.connection_of(sess.bufnr)
+    local spec = connections.view(sess.project).get(name)
+    if not spec then
+      cb(("unknown connection %q (see :Perijove connections)"):format(name))
       return
     end
-    local localserver = require("perijove.localserver")
-    local transport = require("perijove.transport")
-    local server_client = require("perijove.client.server")
-    local wire = require("perijove").transport() or transport.create(nil, {})
-    local srv = localserver.spawn()
-    sess.srv = srv
-    -- readiness polling blocks briefly (pumping the loop); async polling is
-    -- a noted refinement
-    if not localserver.wait_ready(srv, wire, 60000) then
-      srv.stop()
-      sess.srv = nil
-      cb("local jupyter server did not come up")
-      return
-    end
-    local client = server_client.new({
-      transport = wire,
-      base_url = srv.base_url,
-      token = srv.token,
-      path = vim.api.nvim_buf_get_name(sess.bufnr),
-    })
-    client:connect(function(err)
+    connections.resolve(spec, function(err, ep)
       if err then
-        srv.stop()
-        sess.srv = nil
         cb(err)
-      else
-        cb(nil, client)
+        return
       end
+      sess.endpoint = ep -- the session owns it: stop on switch/close
+      local server_client = require("perijove.client.server")
+      local client = server_client.new({
+        transport = ep.transport or require("perijove").transport(),
+        base_url = ep.base_url,
+        token = ep.token,
+        headers = ep.headers,
+        path = vim.api.nvim_buf_get_name(sess.bufnr),
+      })
+      client:connect(function(cerr)
+        if cerr then
+          if ep.stop then
+            pcall(ep.stop)
+          end
+          sess.endpoint = nil
+          cb(cerr)
+        else
+          cb(nil, client)
+        end
+      end)
     end)
   end
+end
+
+-- Point a live notebook at another connection: the old kernel (and its
+-- endpoint: tunnel, local server) goes away NOW, queued and running cells
+-- settle locally (a switched-away kernel never answers), outputs stay, and
+-- the next run boots on the new connection.
+function M.set_connection(bufnr, name)
+  local sess = M.session_of(bufnr)
+  if not sess then
+    return
+  end
+  assert(connections.view(sess.project).get(name), ("perijove: unknown connection %q"):format(tostring(name)))
+  sess.connection = name
+  local old_ep = sess.endpoint
+  sess.endpoint = nil
+  if sess.client.rebase then
+    sess.client:rebase(connection_factory(sess))
+  end
+  if old_ep and old_ep.stop then
+    pcall(old_ep.stop)
+  end
+  sess.store:restart()
 end
 
 ---------------------------------------------------------------------------
@@ -122,6 +168,16 @@ local function mount(sess, cells)
   chord(sess.handle.bufnr, "R", function()
     sess.store:restart()
   end, "restart kernel")
+  chord(sess.handle.bufnr, "s", function()
+    require("perijove.connections.ui").pick({
+      project = sess.project,
+      current = M.connection_of(sess.bufnr),
+    }, function(spec)
+      if spec then
+        M.set_connection(sess.bufnr, spec.name)
+      end
+    end)
+  end, "switch jupyter connection")
   -- land the cursor IN the notebook: chords and cell navigation live on the
   -- view's buffer, not the covered file window
   sess.handle.focus()
@@ -132,8 +188,9 @@ end
 ---------------------------------------------------------------------------
 
 -- Open the notebook UI over `bufnr` (a loaded .ipynb buffer, shown in the
--- current window). opts.client injects a kernel client (tests, remotes);
--- default is the lazy local-jupyter client.
+-- current window). opts.client injects a kernel client (tests); the default
+-- is a lazy client that boots the session's effective connection on the
+-- first run.
 function M.open(bufnr, opts)
   bufnr = bufnr ~= 0 and bufnr or vim.api.nvim_get_current_buf()
   local existing = M._sessions[bufnr]
@@ -142,7 +199,13 @@ function M.open(bufnr, opts)
   end
   local sess = existing or { bufnr = bufnr }
   M._sessions[bufnr] = sess
-  sess.client = (opts and opts.client) or lazy.new(local_factory(sess))
+  -- project-level connections (perijove.json, resolved upward from the file)
+  local proj, perr = project.load_for(vim.api.nvim_buf_get_name(bufnr))
+  if perr then
+    vim.notify("perijove: " .. perr, vim.log.levels.WARN)
+  end
+  sess.project = proj
+  sess.client = (opts and opts.client) or lazy.new(connection_factory(sess))
 
   local text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
   local doc
@@ -243,8 +306,8 @@ function M.close(bufnr)
       sess.client:shutdown()
     end)
   end
-  if sess.srv then
-    pcall(sess.srv.stop)
+  if sess.endpoint and sess.endpoint.stop then
+    pcall(sess.endpoint.stop)
   end
   M._sessions[bufnr] = nil
 end

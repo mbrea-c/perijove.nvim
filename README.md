@@ -41,6 +41,62 @@ plugin never depends on `$PATH`.
 UI over that window (`auto_open = false` to opt out; `:Perijove` opens or
 toggles by hand). The kernel is LAZY — nothing boots until the first run.
 
+### Connections
+
+Where the kernel lives is a **jupyter connection**: a named, declarative spec
+kept in one plugin-global registry (`perijove.connections`). Resolving a
+connection yields an endpoint (base url + credentials, plus a `stop()` when
+the connection owns a process), and the same server client dials all of them.
+The kinds:
+
+- `local` — spawn `jupyter-server` on this machine (the builtin default,
+  always registered as `local`; fields `cmd?`, `root_dir?`);
+- `remote` — a server that already exists: `url`, plus `token` or `headers`
+  (a table, or a function re-read per request for expiring credentials);
+- `command` — a tunnel-shaped setup (SageMaker via SSM, `ssh -L`, ...):
+  `argv` is spawned, prints ONE JSON handshake line on stdout
+  (`{"url": ..., "token"?: ..., "headers"?: ...}`), then stays alive as the
+  tunnel; it is killed when the notebook lets go;
+- a raw `connect = function(spec, cb)` for anything dynamic, from `setup()`
+  or the lua API only; `cb(err, endpoint)`.
+
+Register them in `setup()` and pick the global default:
+
+```lua
+require("perijove").setup({
+  connections = {
+    { name = "gpu-box", kind = "remote", url = "http://gpu:8888", token = "..." },
+    { name = "sagemaker", kind = "command", argv = { "ssm-tunnel", "up" } },
+  },
+  default_connection = "gpu-box",
+})
+```
+
+or per project in a `perijove.json`, resolved upward from the notebook file
+(nearest wins; its connections shadow global ones by name, its `default`
+beats the global default):
+
+```json
+{
+  "connections": [
+    { "name": "team-gpu", "kind": "remote", "url": "http://gpu:8888" }
+  ],
+  "default": "team-gpu"
+}
+```
+
+or dynamically: `require("perijove.connections").add{...}` / `.set_default()`
+/ `.remove()`, and `require("perijove.notebook_file").set_connection(bufnr,
+name)` for one notebook. Interactively: `<C-j>s` (or `:Perijove connections`)
+picks the connection for the current notebook — switching a live notebook
+shuts the old kernel down and the next run boots on the new connection,
+outputs intact; outside a notebook it sets the global default. `:Perijove
+connect <name>` skips the picker (names complete), `:Perijove new-connection`
+creates one interactively (in-memory; persist it via `setup()` or
+`perijove.json`). A notebook's effective connection is: explicitly selected >
+`perijove.json` default > `setup()` default > `local`. Whatever is picked,
+nothing dials until the first run.
+
 Saving rides vim's own file semantics: `:w` — on the notebook, inside a
 focused cell buffer (they are named acwrite buffers), `:wa`, anything —
 syncs cell buffers into the store, serializes to nbformat (sorted keys,
@@ -65,8 +121,9 @@ trip, and raw-JSON edits win by re-parse on the way back up.
   down/up · `<C-j>m` retype code<->markdown · `<C-j>c` fold outputs ·
   `<C-j>C` clear outputs.
   Notebook-wide: `<C-j>a` run all, `<C-j>i` interrupt, `<C-j>R` restart
-  kernel, `<C-j>x` clear all outputs, `<C-j>w` save, `<C-j>t` toggle raw
-  ipynb, `<C-j>p` toggle markdown side previews.
+  kernel, `<C-j>s` switch jupyter connection, `<C-j>x` clear all outputs,
+  `<C-j>w` save, `<C-j>t` toggle raw ipynb, `<C-j>p` toggle markdown side
+  previews.
 
 - `input()` works: the kernel's stdin ask renders an inline prompt under
   the running cell (a fibrous text_input; `<CR>` submits). The status line

@@ -26,6 +26,12 @@ the architecture; this file records the working conventions.
 Two pluggable seams, chosen so either can be replaced without touching its
 neighbors:
 
+0. **jupyter connection** (`lua/perijove/connections/`) — WHERE a kernel
+   lives: a named declarative spec (local / remote / command / lua) in one
+   plugin-global registry, resolving to an endpoint (base url, credentials,
+   optional stop()). Project overrides come from `perijove.json` (nearest,
+   upward from the notebook). Everything below consumes endpoints; nothing
+   above the connection layer may know how one is established.
 1. **kernel client** — the interface the notebook store consumes
    (execute/interrupt/... plus iopub-shaped handler callbacks). The scripted
    client used by tests/demo, the real server client, and a hypothetical

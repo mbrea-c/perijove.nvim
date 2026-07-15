@@ -22,6 +22,16 @@ UI items parked while other work happens. Roughly ordered.
 - [ ] Scroll-to-output on run (the jump machinery in view/notebook makes
       this cheap now).
 
+## Connections
+
+- [ ] Share one resolved endpoint across notebooks on the same connection
+      (today each notebook resolves its own: N notebooks on `local` means N
+      jupyter servers; the sessions API would happily multiplex one).
+- [ ] Async readiness polling for the local kind (wait_ready pumps the loop).
+- [ ] Persist UI-created connections (offer to write them into the nearest
+      perijove.json?); today they are in-memory only.
+- [ ] Surface the effective connection name in the notebook status line.
+
 ## Kernel UX
 
 - [ ] Password-style stdin (`getpass`): the prompt renders as a normal
@@ -31,6 +41,15 @@ UI items parked while other work happens. Roughly ordered.
       buffer close / VimLeave).
 
 ## Done (this file's graduates)
+
+- [x] Jupyter connections: a plugin-global registry of declarative specs
+      (local / remote / command / lua) resolving to endpoints; preconfigured
+      via `setup({ connections, default_connection })`, per-project via
+      `perijove.json` (upward, nearest wins), interactive pick/create
+      (`<C-j>s`, `:Perijove connections|connect|new-connection`), lua API
+      (`perijove.connections`, `notebook_file.set_connection`). Switching a
+      live notebook rebases the lazy client: old kernel and tunnel torn
+      down, next run boots on the new connection, outputs stay.
 
 - [x] Cell management chords: `<C-j>o`/`<C-j>O` add below/above, `<C-j>d`
       delete, `<C-j>J`/`<C-j>K` move, `<C-j>m` retype — page-level via

@@ -16,13 +16,16 @@ local M = {}
 local Client = {}
 Client.__index = Client
 
--- opts: { transport (required), base_url (required), token?, kernel_name?,
---         name?, path? } — name/path label the session server-side.
+-- opts: { transport (required), base_url (required), token?, headers?,
+--         kernel_name?, name?, path? } — name/path label the session
+--         server-side. headers is a table, or a function returning one,
+--         re-read per request (dynamic creds: SigV4, expiring tokens).
 function M.new(opts)
   return setmetatable({
     transport = opts.transport,
     base_url = opts.base_url:gsub("/$", ""),
     token = opts.token,
+    headers = opts.headers,
     kernel_name = opts.kernel_name or "python3",
     name = opts.name or "perijove",
     path = opts.path or "perijove.ipynb",
@@ -39,6 +42,13 @@ end
 
 function Client:_headers()
   local h = {}
+  local extra = self.headers
+  if type(extra) == "function" then
+    extra = extra()
+  end
+  for k, v in pairs(extra or {}) do
+    h[k] = v
+  end
   if self.token then
     h["Authorization"] = "token " .. self.token
   end

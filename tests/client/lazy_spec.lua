@@ -85,6 +85,31 @@ describe("client.lazy", function()
     assert.equal(2, calls())
   end)
 
+  it("rebase swaps the factory: old client shut down, next run boots anew", function()
+    local client, inner, statuses, calls, ready = env()
+    client:execute("a", { on_done = function() end })
+    ready(nil)
+    assert.equal(1, #inner.executions)
+
+    local second = fake_client.new()
+    local shutdowns = 0
+    inner.shutdown = function()
+      shutdowns = shutdowns + 1
+    end
+    client:rebase(function(cb)
+      cb(nil, second)
+    end)
+    assert.equal(1, shutdowns) -- the old kernel is not left running
+
+    client:execute("b", { on_done = function() end })
+    assert.equal(1, calls()) -- the OLD factory is not consulted again
+    assert.equal(1, #inner.executions)
+    assert.equal("b", second.executions[1].code)
+    -- statuses from the new client still reach the attached store
+    second:push_status("busy")
+    assert.equal("busy", statuses[#statuses])
+  end)
+
   it("forwards interrupt only when a real client exists", function()
     local client, inner, _, _, ready = env()
     client:interrupt() -- nothing to interrupt; must not error

@@ -88,6 +88,33 @@ describe("client.server connect", function()
     assert.equal("token sekrit", t.ws.opts.headers["Authorization"])
   end)
 
+  it("sends extra headers, re-reading a headers FUNCTION per request", function()
+    local t = fake_transport({
+      ["POST " .. BASE .. "/api/sessions"] = {
+        status = 201,
+        body = { id = "sess-1", kernel = { id = "kern-1", name = "python3" } },
+      },
+      ["POST " .. BASE .. "/api/kernels/kern-1/interrupt"] = { status = 204, body = vim.empty_dict() },
+    })
+    local serial = 0
+    local c = server.new({
+      transport = t,
+      base_url = BASE,
+      token = "sekrit",
+      headers = function()
+        serial = serial + 1
+        return { ["X-Cred"] = "v" .. serial }
+      end,
+    })
+    c:connect(function() end)
+    -- dynamic creds: each request gets a FRESH read (SigV4, expiring tokens)
+    assert.equal("v1", t.requests[1].headers["X-Cred"])
+    assert.equal("token sekrit", t.requests[1].headers["Authorization"]) -- token still rides along
+    assert.equal("v2", t.ws.opts.headers["X-Cred"])
+    c:interrupt()
+    assert.equal("v3", t.requests[2].headers["X-Cred"])
+  end)
+
   it("synthesizes an idle status on connect for an attached store", function()
     local t = fake_transport({
       ["POST " .. BASE .. "/api/sessions"] = {

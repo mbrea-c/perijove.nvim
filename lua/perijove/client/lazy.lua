@@ -19,6 +19,7 @@ function M.new(factory)
     _booting = false,
     _pending = nil, -- the one parked { code, handlers }
     _handlers = {},
+    _gen = 0, -- bumped by rebase(); boots from an older gen are stale
   }, Client)
 end
 
@@ -37,8 +38,21 @@ end
 
 function Client:_boot()
   self._booting = true
+  local gen = self._gen
   self:_status("starting")
   self._factory(function(err, real)
+    if gen ~= self._gen then
+      -- rebase() happened mid-boot: this client belongs to the OLD
+      -- connection; retire it and boot again for the new one if needed
+      if real and real.shutdown then
+        real:shutdown()
+      end
+      self._booting = false
+      if self._pending then
+        self:_boot()
+      end
+      return
+    end
     self._booting = false
     if err or not real then
       self:_status("dead")
@@ -70,6 +84,21 @@ function Client:execute(code, handlers)
   self._pending = { code = code, handlers = handlers }
   if not self._booting then
     self:_boot()
+  end
+end
+
+-- Swap the boot recipe (a connection switch): the current real client is
+-- shut down NOW and the next execute boots through the new factory. The
+-- store's serial queue and handlers survive untouched.
+function Client:rebase(factory)
+  self._factory = factory
+  self._gen = self._gen + 1
+  if self._real then
+    local old = self._real
+    self._real = nil
+    if old.shutdown then
+      old:shutdown()
+    end
   end
 end
 
