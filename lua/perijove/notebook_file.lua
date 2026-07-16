@@ -14,7 +14,12 @@
 --           never stale) and back. The store — outputs, kernel session —
 --           survives the round trip; editing the raw JSON while toggled
 --           re-parses into a fresh store on remount (same client, so the
---           kernel survives even that).
+--           kernel survives even that);
+--   close   the UI and the buffer's window live and die together. :q on
+--           either app window hides the notebook (store, outputs and kernel
+--           survive; showing the buffer again remounts, jupyter-style);
+--           deleting or wiping the BUFFER closes the whole session, kernel
+--           shutdown included.
 
 local nr = require("fibrous")
 local ipynb = require("perijove.ipynb")
@@ -123,10 +128,24 @@ local function chord(buf, key, fn, desc)
   vim.keymap.set("n", notebook.PREFIX .. key, fn, { buffer = buf, desc = "perijove: " .. desc })
 end
 
+-- Unmount the view because perijove says so (toggle, close, remount): the
+-- flag keeps the mount's on_unmount from treating it as a user-driven :q.
+local function drop_ui(sess)
+  local handle = sess.handle
+  if not handle then
+    return
+  end
+  sess.unmounting = true
+  sess.handle = nil
+  handle.unmount()
+  sess.unmounting = false
+end
+
 -- Mount the view for `sess`. With `cells` given, a fresh store is built
 -- (open, or re-parse after raw edits); without, the existing store — with
--- its outputs and kernel wiring — is reused (toggle back).
-local function mount(sess, cells)
+-- its outputs and kernel wiring — is reused (toggle back, remount after a
+-- hide). `winid` is the window to mount over (default: the current one).
+local function mount(sess, cells, winid)
   if cells then
     local st = store_mod.new(sess.client)
     for i, c in ipairs(cells) do
@@ -149,6 +168,7 @@ local function mount(sess, cells)
     sess.lsp = lsp.attach_for(sess)
   end
   sess.actions = { current = {} }
+  sess.raw = false
   sess.handle = nr.mount_window(notebook.Notebook, {
     store = sess.store,
     actions = sess.actions,
@@ -160,7 +180,29 @@ local function mount(sess, cells)
         sess.lsp:register_buf(cell.id, buf)
       end
     end,
-  }, { winid = 0, mode = "scroll", keys = notebook.KEYS })
+  }, {
+    winid = winid or 0,
+    mode = "scroll",
+    keys = notebook.KEYS,
+    on_unmount = function()
+      if sess.unmounting then
+        return
+      end
+      -- the UI died on nvim's side (:q on the float or its window): HIDE.
+      -- The session — store, outputs, kernel — survives; showing the buffer
+      -- again remounts it (BufWinEnter in M.open).
+      sess.handle = nil
+      if vim.api.nvim_buf_is_valid(sess.bufnr) then
+        sess.raw_tick = vim.api.nvim_buf_get_changedtick(sess.bufnr)
+        -- closing either closes the other: take the buffer's window along
+        -- (a last window survives — vim won't close it — showing raw JSON)
+        local win = vim.fn.bufwinid(sess.bufnr)
+        if win ~= -1 then
+          pcall(vim.api.nvim_win_close, win, false)
+        end
+      end
+    end,
+  })
 
   chord(sess.handle.bufnr, "t", function()
     M.toggle(sess.bufnr)
@@ -193,6 +235,30 @@ local function mount(sess, cells)
   -- land the cursor IN the notebook: chords and cell navigation live on the
   -- view's buffer, not the covered file window
   sess.handle.focus()
+end
+
+-- Bring the UI back over `winid` after a hide or a raw toggle. Raw edits
+-- win: a changed buffer re-parses into a fresh store (same client, so a
+-- live kernel survives); an untouched one reuses the store as-is.
+local function remount(sess, winid)
+  if vim.api.nvim_buf_get_changedtick(sess.bufnr) ~= sess.raw_tick then
+    local text = table.concat(vim.api.nvim_buf_get_lines(sess.bufnr, 0, -1, false), "\n")
+    local doc = ipynb.decode(text)
+    sess.meta = doc.meta
+    mount(sess, doc.cells, winid)
+  else
+    mount(sess, nil, winid)
+  end
+end
+
+-- The window currently showing `bufnr` in the real layout, or nil. Floats
+-- (previews and the like) don't count: the notebook never mounts over one.
+local function layout_win_of(bufnr)
+  local win = vim.fn.bufwinid(bufnr)
+  if win == -1 or vim.api.nvim_win_get_config(win).relative ~= "" then
+    return nil
+  end
+  return win
 end
 
 ---------------------------------------------------------------------------
@@ -228,7 +294,7 @@ function M.open(bufnr, opts)
     doc = { meta = ipynb.new_meta(), cells = { { type = "code", source = "" } } }
   end
   sess.meta = doc.meta
-  mount(sess, doc.cells)
+  mount(sess, doc.cells, layout_win_of(bufnr))
 
   -- :w and friends on the FILE buffer route through the notebook save
   sess.autocmds = {
@@ -236,6 +302,31 @@ function M.open(bufnr, opts)
       buffer = bufnr,
       callback = function()
         M.save(bufnr)
+      end,
+    }),
+    -- a hidden notebook remounts when its buffer is shown again — unless it
+    -- was toggled to raw on purpose, or the showing window is a preview float
+    vim.api.nvim_create_autocmd("BufWinEnter", {
+      buffer = bufnr,
+      callback = function()
+        vim.schedule(function()
+          if M._sessions[bufnr] ~= sess or sess.handle or sess.raw then
+            return
+          end
+          local win = layout_win_of(bufnr)
+          if win then
+            remount(sess, win)
+          end
+        end)
+      end,
+    }),
+    -- the buffer going away takes the whole session with it, kernel included
+    vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
+      buffer = bufnr,
+      callback = function()
+        vim.schedule(function()
+          M.close(bufnr)
+        end)
       end,
     }),
   }
@@ -287,19 +378,15 @@ function M.toggle(bufnr)
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
     vim.bo[bufnr].modified = was_dirty
     sess.raw_tick = vim.api.nvim_buf_get_changedtick(bufnr)
-    sess.handle.unmount()
-    sess.handle = nil
-  else
-    -- back up: raw edits win — re-parse into a fresh store (same client, so
-    -- a live kernel survives); untouched JSON reuses the store as-is
-    if vim.api.nvim_buf_get_changedtick(bufnr) ~= sess.raw_tick then
-      local text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
-      local doc = ipynb.decode(text)
-      sess.meta = doc.meta
-      mount(sess, doc.cells)
-    else
-      mount(sess, nil)
+    sess.raw = true -- deliberate: BufWinEnter must not remount over the raw view
+    drop_ui(sess)
+    -- land the cursor on the raw JSON, wherever focus fell after the floats
+    local win = layout_win_of(bufnr)
+    if win then
+      vim.api.nvim_set_current_win(win)
     end
+  else
+    remount(sess, layout_win_of(bufnr))
   end
 end
 
@@ -310,9 +397,7 @@ function M.close(bufnr)
   if not sess then
     return
   end
-  if sess.handle then
-    sess.handle.unmount()
-  end
+  drop_ui(sess)
   for _, au in ipairs(sess.autocmds or {}) do
     pcall(vim.api.nvim_del_autocmd, au)
   end
@@ -334,12 +419,18 @@ end
 function M.setup_autocmds(auto_open)
   local group = vim.api.nvim_create_augroup("PerijoveNotebookFile", { clear = true })
   if auto_open then
-    vim.api.nvim_create_autocmd("BufReadPost", {
+    -- BufWinEnter, not BufReadPost: the trigger is a notebook being SHOWN in
+    -- a real window, not merely loaded — telescope-style preview floats and
+    -- bufload() must never boot a session behind the user's back.
+    vim.api.nvim_create_autocmd("BufWinEnter", {
       group = group,
       pattern = "*.ipynb",
       callback = function(ev)
         vim.schedule(function()
-          if vim.api.nvim_buf_is_valid(ev.buf) then
+          if not vim.api.nvim_buf_is_valid(ev.buf) or M._sessions[ev.buf] then
+            return
+          end
+          if layout_win_of(ev.buf) then
             M.open(ev.buf)
           end
         end)

@@ -32,6 +32,10 @@ function M.new()
     end
   end
 
+  function c:shutdown()
+    self.shutdowns = (self.shutdowns or 0) + 1
+  end
+
   -- spec-side conveniences ------------------------------------------------
 
   -- the most recent execution parked on the fake

@@ -109,6 +109,107 @@ describe("notebook_file save", function()
   end)
 end)
 
+describe("notebook_file lifecycle", function()
+  it(":q on the notebook window hides the UI; reshowing the buffer remounts it", function()
+    local _, bufnr, sess = open_fixture()
+    local store_before = sess.store
+    sess.store:set_source(sess.store.cells[2].id, "survives_hide = True")
+
+    -- a second window, so the notebook's window can actually close
+    vim.cmd("botright vnew")
+    local other = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_close(vim.fn.bufwinid(bufnr), true)
+    vim.wait(500, function()
+      return sess.handle == nil
+    end, 10)
+
+    -- hidden, not dead: the session (store, outputs, kernel) survives
+    assert.is_nil(sess.handle)
+    assert.rawequal(sess, notebook_file.session_of(bufnr))
+
+    -- showing the buffer again remounts the SAME store over the new window
+    vim.api.nvim_set_current_win(other)
+    vim.cmd("buffer " .. bufnr)
+    vim.wait(500, function()
+      return sess.handle ~= nil
+    end, 10)
+    assert.is_not_nil(sess.handle)
+    assert.equal(other, sess.handle.host_winid)
+    assert.rawequal(store_before, sess.store)
+    assert.truthy(buf_text(sess.handle.bufnr):find("survives_hide = True", 1, true))
+
+    cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+
+  it("toggling to raw keeps the notebook window open in split layouts", function()
+    local _, bufnr, sess = open_fixture()
+    vim.cmd("botright vnew") -- with a second window, closing is possible — and wrong
+    local scratch = vim.api.nvim_get_current_buf()
+
+    notebook_file.toggle(bufnr)
+    local win = vim.fn.bufwinid(bufnr)
+    assert.is_true(win ~= -1)
+    assert.equal(win, vim.api.nvim_get_current_win()) -- cursor lands on the raw JSON
+    assert.truthy(buf_text(bufnr):find('"cells"', 1, true))
+
+    -- toggling back mounts over the buffer's own window, wherever focus sits
+    vim.cmd("wincmd p")
+    notebook_file.toggle(bufnr)
+    assert.equal(win, sess.handle.host_winid)
+
+    cleanup(bufnr)
+    vim.cmd("silent! bwipeout! " .. scratch)
+    vim.cmd("silent! only")
+  end)
+
+  it("wiping the buffer closes the whole session, kernel included", function()
+    local _, bufnr, sess = open_fixture()
+    local client = sess.client
+    -- NB an nvim quirk: wiping a buffer whose ONLY normal window backs the
+    -- mount, while the current window is a float, silently no-ops (no
+    -- BufWipeout fires at all). Any real layout — a second window, focus on
+    -- the pane — deletes fine, so give it one.
+    vim.cmd("botright vnew")
+    local scratch = vim.api.nvim_get_current_buf()
+    vim.cmd("silent! bwipeout! " .. bufnr)
+    vim.wait(500, function()
+      return notebook_file.session_of(bufnr) == nil
+    end, 10)
+
+    assert.is_nil(notebook_file.session_of(bufnr))
+    assert.is_nil(sess.handle)
+    assert.equal(1, client.shutdowns)
+    vim.cmd("silent! bwipeout! " .. scratch)
+    vim.cmd("silent! only")
+  end)
+
+  it("auto_open mounts on display in a normal window, never on preview loads", function()
+    notebook_file.setup_autocmds(true)
+    local path = write_fixture()
+
+    -- a preview-style load: read without showing (telescope previews, bufload)
+    local buf = vim.fn.bufadd(path)
+    vim.fn.bufload(buf)
+    vim.wait(200, function()
+      return notebook_file.session_of(buf) ~= nil
+    end, 10)
+    assert.is_nil(notebook_file.session_of(buf))
+
+    -- shown for real in the current window: the UI mounts
+    vim.cmd("edit " .. path)
+    vim.wait(500, function()
+      return notebook_file.session_of(buf) ~= nil
+    end, 10)
+    local sess = notebook_file.session_of(buf)
+    assert.is_not_nil(sess)
+    assert.is_not_nil(sess.handle)
+
+    cleanup(buf)
+    notebook_file.setup_autocmds(false)
+  end)
+end)
+
 describe("notebook_file toggle", function()
   it("drops to current raw JSON and mounts back, keeping the store", function()
     local _, bufnr, sess = open_fixture()
