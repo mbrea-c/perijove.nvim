@@ -144,14 +144,17 @@ notebook's kernel and wait for its outputs, and save — all against the
 store, so edits land like a user's (view re-renders, dirty flag set, kernel
 kept).
 
-Wiring follows the dumb-shim pattern: the MCP client spawns
-`nvim -l mcp/shim.lua` from inside a `:terminal` (it finds the parent nvim
-via `$NVIM`) and every JSON-RPC frame is handled in the live nvim. If you
-already run an nvim-mcp style server, skip the shim and plant the same
-tools into it:
+The MCP host is the separate
+[nvim-mcp](https://github.com/mbrea-c/nvim-mcp) plugin: one server per
+nvim, a dumb stdio shim (`nvim -l <nvim-mcp>/shim.lua`, spawned by the MCP
+client from inside a `:terminal`, finding the parent via `$NVIM`), protocol
+and tool registry running in the live nvim. perijove is a pure tool
+provider: when nvim-mcp is installed, `setup()` registers the `notebook_*`
+tools into it automatically, and nothing in perijove requires it. Any
+server exposing `register_tool(name, def)` works:
 
 ```lua
-require("perijove.mcp").register_into(require("nvim-mcp"))
+require("perijove.mcp").register_into(my_server)
 ```
 
 ## UI plan (decided so far)

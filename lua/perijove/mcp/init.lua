@@ -6,23 +6,17 @@
 -- notebook exactly like a user's, the view re-renders, the kernel stays,
 -- and dirty/save semantics apply.
 --
--- Architecture mirrors nvim-mcp (the dumb-shim pattern): a stdio shim
--- (`nvim -l mcp/shim.lua`, spawned by the MCP client from inside a
--- :terminal) forwards each JSON-RPC frame here via nvim_exec_lua; all
--- protocol logic and every tool run in the user's live nvim. Alternatively
--- register_into() plants the same tools into an already-running nvim-mcp
--- style server, so one server carries them all.
+-- The protocol host is the shared nvim-mcp plugin: one MCP server per nvim,
+-- a dumb stdio shim (`nvim -l <nvim-mcp>/shim.lua`, spawned by the MCP
+-- client from inside a :terminal) relaying each JSON-RPC frame into the live
+-- nvim. perijove is a pure tool PROVIDER — setup() plants these tools into
+-- nvim-mcp when it is installed (a pcall'd soft dependency; nothing here
+-- requires it), and register_into() plants them into anything exposing
+-- register_tool(name, def).
 
 local notebook_file = require("perijove.notebook_file")
 
 local M = {}
-
-local PROTOCOL_VERSION = "2025-06-18"
-
-local SERVER_INFO = {
-  name = "perijove-mcp",
-  version = "0.1.0",
-}
 
 ---------------------------------------------------------------------------
 -- Session and cell resolution
@@ -305,105 +299,6 @@ function M.register_into(server)
   for name, def in pairs(tools) do
     server.register_tool(name, def)
   end
-end
-
----------------------------------------------------------------------------
--- Standalone JSON-RPC handling (the shim's counterpart)
----------------------------------------------------------------------------
-
-local function rpc_result(id, result)
-  return { jsonrpc = "2.0", id = id, result = result }
-end
-
-local function rpc_error(id, code, message, data)
-  local err = { code = code, message = message }
-  if data ~= nil then
-    err.data = data
-  end
-  return { jsonrpc = "2.0", id = id, error = err }
-end
-
-local function to_tool_result(ok, ret)
-  if not ok then
-    -- a Lua error in the handler is a TOOL error (isError), not a protocol
-    -- error: the call was well-formed, the tool just failed
-    return {
-      content = { { type = "text", text = "Tool error: " .. tostring(ret) } },
-      isError = true,
-    }
-  end
-  if type(ret) == "table" and ret.content ~= nil then
-    return ret
-  end
-  return {
-    content = { { type = "text", text = type(ret) == "string" and ret or vim.inspect(ret) } },
-    isError = false,
-  }
-end
-
-local methods = {}
-
-function methods.initialize(_params)
-  return {
-    protocolVersion = PROTOCOL_VERSION,
-    capabilities = { tools = { listChanged = false } },
-    serverInfo = SERVER_INFO,
-  }
-end
-
-function methods.ping(_params)
-  return vim.empty_dict()
-end
-
-methods["tools/list"] = function(_params)
-  local list = {}
-  for name, def in pairs(tools) do
-    list[#list + 1] = {
-      name = name,
-      description = def.description or "",
-      inputSchema = def.inputSchema or { type = "object", properties = vim.empty_dict() },
-    }
-  end
-  table.sort(list, function(a, b)
-    return a.name < b.name
-  end)
-  return { tools = list }
-end
-
-methods["tools/call"] = function(params)
-  params = params or {}
-  local def = tools[params.name]
-  if not def then
-    return nil, { code = -32602, message = "Unknown tool: " .. tostring(params.name) }
-  end
-  local ok, ret = pcall(def.handler, params.arguments or {})
-  return to_tool_result(ok, ret)
-end
-
--- Handle one decoded JSON-RPC request; returns a decoded response table, or
--- nil for notifications (no reply).
-function M.handle(req)
-  if type(req) ~= "table" or req.jsonrpc ~= "2.0" then
-    return rpc_error(req and req.id, -32600, "Invalid Request")
-  end
-  local handler = methods[req.method]
-  if req.id == nil then
-    if handler then
-      pcall(handler, req.params)
-    end
-    return nil
-  end
-  if not handler then
-    return rpc_error(req.id, -32601, "Method not found: " .. tostring(req.method))
-  end
-  local ok, result, proto_err = pcall(handler, req.params)
-  if not ok then
-    return rpc_error(req.id, -32603, "Internal error: " .. tostring(result))
-  end
-  if proto_err then
-    return rpc_error(req.id, proto_err.code, proto_err.message, proto_err.data)
-  end
-  return rpc_result(req.id, result)
 end
 
 return M

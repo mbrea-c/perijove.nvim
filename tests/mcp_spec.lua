@@ -1,6 +1,8 @@
--- The MCP surface: live notebooks as tools for external agents. Driven
--- entirely through handle() (what the stdio shim forwards), against a real
--- session over the fake kernel client — no network, no shim process.
+-- The MCP surface: live notebooks as tools for external agents. The protocol
+-- host (JSON-RPC, shim, tools/list) lives in the separate nvim-mcp plugin;
+-- perijove only PROVIDES tool defs, planted via register_into(). Specs drive
+-- the handlers through a fake server table, against a real session over the
+-- fake kernel client — no network, no shim, no nvim-mcp dependency.
 
 local notebook_file = require("perijove.notebook_file")
 local mcp = require("perijove.mcp")
@@ -37,32 +39,28 @@ local function cleanup(bufnr)
   vim.cmd("silent! bwipeout! " .. bufnr)
 end
 
-local next_id = 0
-local function call(name, arguments)
-  next_id = next_id + 1
-  local res = mcp.handle({
-    jsonrpc = "2.0",
-    id = next_id,
-    method = "tools/call",
-    params = { name = name, arguments = arguments },
-  })
-  assert.is_nil(res.error)
-  return res.result.content[1].text, res.result.isError
+-- an nvim-mcp shaped server, reduced to what the tools touch
+local function fake_server()
+  local srv = { tools = {} }
+  function srv.register_tool(name, def)
+    srv.tools[name] = def
+  end
+  return srv
 end
 
-describe("mcp protocol", function()
-  it("initialize advertises the tools capability", function()
-    local res = mcp.handle({ jsonrpc = "2.0", id = 1, method = "initialize", params = {} })
-    assert.equal("2025-06-18", res.result.protocolVersion)
-    assert.equal("perijove-mcp", res.result.serverInfo.name)
-  end)
+local server = fake_server()
+mcp.register_into(server)
 
-  it("tools/list carries every notebook tool with a schema", function()
-    local res = mcp.handle({ jsonrpc = "2.0", id = 2, method = "tools/list" })
-    local by_name = {}
-    for _, t in ipairs(res.result.tools) do
-      by_name[t.name] = t
-    end
+-- what the host does with a call: pcall the handler, report text + isError
+local function call(name, arguments)
+  local def = server.tools[name]
+  assert.is_not_nil(def)
+  local ok, ret = pcall(def.handler, arguments or {})
+  return tostring(ret), not ok
+end
+
+describe("mcp registration", function()
+  it("registers every notebook tool with a description and an object schema", function()
     for _, name in ipairs({
       "notebook_list",
       "notebook_cells",
@@ -73,24 +71,28 @@ describe("mcp protocol", function()
       "notebook_run_cell",
       "notebook_save",
     }) do
-      assert.is_not_nil(by_name[name], name)
-      assert.equal("object", by_name[name].inputSchema.type)
+      local def = server.tools[name]
+      assert.is_not_nil(def, name)
+      assert.equal("object", def.inputSchema.type)
+      assert.truthy(#def.description > 0)
     end
   end)
 
-  it("unknown methods and tools error per spec; notifications stay silent", function()
-    local res = mcp.handle({ jsonrpc = "2.0", id = 3, method = "no/such" })
-    assert.equal(-32601, res.error.code)
-    res = mcp.handle({ jsonrpc = "2.0", id = 4, method = "tools/call", params = { name = "nope" } })
-    assert.equal(-32602, res.error.code)
-    assert.is_nil(mcp.handle({ jsonrpc = "2.0", method = "notifications/initialized" }))
-  end)
-
-  it("a failing tool is an isError result, not a protocol error", function()
+  it("a failing tool raises; the host turns that into an isError result", function()
     -- no notebook open at all
     local text, is_error = call("notebook_cells", {})
     assert.is_true(is_error)
     assert.truthy(text:find("no notebook", 1, true))
+  end)
+
+  it("setup() plants the tools into an installed nvim-mcp", function()
+    local fake = fake_server()
+    package.loaded["nvim-mcp"] = fake
+    require("perijove").setup({ auto_open = false })
+    package.loaded["nvim-mcp"] = nil
+    require("perijove")._reset_config()
+    assert.is_not_nil(fake.tools.notebook_list)
+    assert.is_not_nil(fake.tools.notebook_save)
   end)
 end)
 
@@ -147,7 +149,7 @@ describe("mcp notebook tools", function()
     assert.truthy(text:find("state: ok", 1, true))
     assert.truthy(text:find("hello mcp", 1, true))
 
-    -- markdown cells refuse to run, as a tool error
+    -- markdown cells refuse to run, as a raised (tool) error
     local err, is_error = call("notebook_run_cell", { cell = 1 })
     assert.is_true(is_error)
     assert.truthy(err:find("markdown", 1, true))
