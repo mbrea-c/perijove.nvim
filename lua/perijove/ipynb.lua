@@ -156,6 +156,90 @@ local function encode_output(out, execution_count)
 end
 
 ---------------------------------------------------------------------------
+-- nbformat 3 (IPython "worksheets") -> 4, upgraded on read like jupyter
+-- does. Cells flatten out of the worksheets; heading cells become markdown;
+-- code cells rename input/prompt_number; outputs trade the old shapes
+-- (pyout/pyerr, mime shorthand keys) for the v4 ones. Saving writes v4.
+---------------------------------------------------------------------------
+
+-- v3 outputs carry mime payloads as top-level shorthand keys
+local V3_MIME = {
+  text = "text/plain",
+  html = "text/html",
+  svg = "image/svg+xml",
+  png = "image/png",
+  jpeg = "image/jpeg",
+  latex = "text/latex",
+  json = "application/json",
+  javascript = "application/javascript",
+  pdf = "application/pdf",
+}
+
+local function v3_mime_bundle(o)
+  local data = vim.empty_dict()
+  for short, mime in pairs(V3_MIME) do
+    if o[short] ~= nil then
+      data[mime] = o[short]
+    end
+  end
+  return data
+end
+
+local function upgrade_v3_output(o)
+  if o.output_type == "stream" then
+    return { output_type = "stream", name = o.stream or "stdout", text = o.text }
+  elseif o.output_type == "pyout" then
+    return {
+      output_type = "execute_result",
+      data = v3_mime_bundle(o),
+      metadata = vim.empty_dict(),
+      execution_count = o.prompt_number,
+    }
+  elseif o.output_type == "display_data" then
+    return { output_type = "display_data", data = v3_mime_bundle(o), metadata = vim.empty_dict() }
+  elseif o.output_type == "pyerr" then
+    return { output_type = "error", ename = o.ename, evalue = o.evalue, traceback = o.traceback or {} }
+  end
+  return o
+end
+
+local function upgrade_v3_cell(c)
+  local metadata = c.metadata or vim.empty_dict()
+  if c.cell_type == "heading" then
+    return {
+      cell_type = "markdown",
+      metadata = metadata,
+      source = ("#"):rep(c.level or 1) .. " " .. join_lines(c.source),
+    }
+  elseif c.cell_type == "code" then
+    local outputs = {}
+    for _, o in ipairs(c.outputs or {}) do
+      outputs[#outputs + 1] = upgrade_v3_output(o)
+    end
+    return {
+      cell_type = "code",
+      metadata = metadata,
+      source = c.input,
+      execution_count = c.prompt_number,
+      outputs = outputs,
+    }
+  end
+  return { cell_type = c.cell_type, metadata = metadata, source = c.source }
+end
+
+local function upgrade_v3(nb)
+  local cells = {}
+  for _, ws in ipairs(nb.worksheets or {}) do
+    for _, c in ipairs(ws.cells or {}) do
+      cells[#cells + 1] = upgrade_v3_cell(c)
+    end
+  end
+  local metadata = nb.metadata or vim.empty_dict()
+  metadata.name, metadata.signature = nil, nil -- v3-only top-level fields
+  return { cells = cells, metadata = metadata, nbformat = 4, nbformat_minor = 5 }
+end
+
+---------------------------------------------------------------------------
 -- The document
 ---------------------------------------------------------------------------
 
@@ -164,8 +248,20 @@ local OWNED = { cell_type = true, source = true, outputs = true, execution_count
 
 -- decode(text) -> { meta, cells }: meta is the top-level notebook table
 -- minus cells; each cell is store-shaped plus .meta (its unowned fields).
+-- Legacy nbformat 3 is upgraded in place (doc.upgraded_from says so, meta
+-- already reads nbformat 4); anything that is not a notebook errors.
 function M.decode(text)
   local nb = vim.json.decode(text, { luanil = { object = true, array = true } })
+  if type(nb) ~= "table" or type(nb.nbformat) ~= "number" then
+    error("no nbformat field; this is not a Jupyter notebook", 0)
+  end
+  local upgraded_from
+  if nb.nbformat == 3 then
+    nb = upgrade_v3(nb)
+    upgraded_from = 3
+  elseif nb.nbformat ~= 4 then
+    error(("unsupported nbformat %d (perijove reads 3 and 4)"):format(nb.nbformat), 0)
+  end
   local cells = {}
   for _, c in ipairs(nb.cells or {}) do
     local meta = {}
@@ -192,7 +288,7 @@ function M.decode(text)
       meta[k] = v
     end
   end
-  return { meta = meta, cells = cells }
+  return { meta = meta, cells = cells, upgraded_from = upgraded_from }
 end
 
 local id_counter = 0

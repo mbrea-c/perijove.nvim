@@ -116,6 +116,98 @@ describe("ipynb.decode", function()
   end)
 end)
 
+-- The legacy format (IPython pre-4, "worksheets"): cells nested one level
+-- down, code cells keyed input/prompt_number, heading cells, and outputs in
+-- the old shapes (pyout/pyerr, mime shorthand keys like "png"). Real files
+-- like these are still all over the internet; jupyter upgrades them on read
+-- and so do we.
+local V3_FIXTURE = [[
+{
+ "metadata": {"name": "Part 2"},
+ "nbformat": 3,
+ "nbformat_minor": 0,
+ "worksheets": [
+  {
+   "cells": [
+    {"cell_type": "heading", "level": 2, "metadata": {}, "source": ["Basic Output"]},
+    {"cell_type": "markdown", "metadata": {}, "source": ["prose\n", "more"]},
+    {
+     "cell_type": "code",
+     "collapsed": false,
+     "input": ["print('hi')\n", "42"],
+     "language": "python",
+     "metadata": {},
+     "outputs": [
+      {"output_type": "stream", "stream": "stdout", "text": ["hi\n"]},
+      {"metadata": {}, "output_type": "pyout", "png": "iVBORbase64==", "prompt_number": 5, "text": ["42"]},
+      {"metadata": {}, "output_type": "display_data", "svg": ["<svg/>"]},
+      {"ename": "ValueError", "evalue": "boom", "output_type": "pyerr", "traceback": ["tb"]}
+     ],
+     "prompt_number": 5
+    }
+   ],
+   "metadata": {}
+  }
+ ]
+}
+]]
+
+describe("ipynb.decode nbformat 3", function()
+  it("upgrades worksheets, input and heading cells to store shape", function()
+    local doc = ipynb.decode(V3_FIXTURE)
+    assert.equal(3, doc.upgraded_from)
+    assert.equal(3, #doc.cells)
+    assert.equal("markdown", doc.cells[1].type)
+    assert.equal("## Basic Output", doc.cells[1].source)
+    assert.equal("prose\nmore", doc.cells[2].source)
+    local code = doc.cells[3]
+    assert.equal("code", code.type)
+    assert.equal("print('hi')\n42", code.source)
+    assert.equal(5, code.execution_count)
+  end)
+
+  it("maps v3 outputs and their mime shorthand keys", function()
+    local outs = ipynb.decode(V3_FIXTURE).cells[3].outputs
+    assert.same({ kind = "stream", name = "stdout", text = "hi\n" }, outs[1])
+    assert.equal("result", outs[2].kind)
+    assert.equal("42", outs[2].data["text/plain"])
+    assert.equal("iVBORbase64==", outs[2].data["image/png"])
+    assert.equal("display", outs[3].kind)
+    assert.equal("<svg/>", outs[3].data["image/svg+xml"])
+    assert.equal("error", outs[4].kind)
+    assert.equal("ValueError", outs[4].ename)
+    assert.same({ "tb" }, outs[4].traceback)
+  end)
+
+  it("encodes back as nbformat 4: cells at top level, ids assigned", function()
+    local doc = ipynb.decode(V3_FIXTURE)
+    local nb = vim.json.decode(ipynb.encode(doc.meta, doc.cells))
+    assert.equal(4, nb.nbformat)
+    assert.is_nil(nb.worksheets)
+    assert.equal(3, #nb.cells)
+    assert.truthy(type(nb.cells[1].id) == "string" and #nb.cells[1].id > 0)
+    assert.is_nil(nb.metadata.name) -- v3-only top-level field, dropped
+    local outs = nb.cells[3].outputs
+    assert.equal("execute_result", outs[2].output_type)
+    assert.equal(5, outs[2].execution_count)
+    assert.equal("error", outs[4].output_type)
+  end)
+end)
+
+describe("ipynb.decode rejects non-notebooks", function()
+  it("errors on JSON without an nbformat field", function()
+    assert.has_error(function()
+      ipynb.decode('{"just": "json"}')
+    end, "nbformat")
+  end)
+
+  it("errors on unsupported nbformat versions", function()
+    assert.has_error(function()
+      ipynb.decode('{"nbformat": 2, "worksheets": []}')
+    end, "nbformat 2")
+  end)
+end)
+
 describe("ipynb.encode", function()
   local function reparse(doc)
     return vim.json.decode(ipynb.encode(doc.meta, doc.cells), { luanil = { object = false, array = false } })

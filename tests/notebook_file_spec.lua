@@ -135,6 +135,89 @@ describe("notebook_file in-memory buffers", function()
   end)
 end)
 
+describe("notebook_file legacy and non-notebook files", function()
+  it("an nbformat 3 file opens upgraded, with a conversion notice", function()
+    local path = vim.fn.tempname() .. ".ipynb"
+    vim.fn.writefile(
+      vim.split(
+        vim.json.encode({
+          metadata = { name = "old" },
+          nbformat = 3,
+          nbformat_minor = 0,
+          worksheets = {
+            {
+              cells = {
+                { cell_type = "heading", level = 1, metadata = vim.empty_dict(), source = { "LegacyTitle" } },
+                {
+                  cell_type = "code",
+                  collapsed = false,
+                  input = { "print('v3')" },
+                  language = "python",
+                  metadata = vim.empty_dict(),
+                  outputs = {},
+                  prompt_number = 2,
+                },
+              },
+              metadata = vim.empty_dict(),
+            },
+          },
+        }),
+        "\n"
+      ),
+      path
+    )
+    vim.cmd("edit " .. path)
+    local bufnr = vim.api.nvim_get_current_buf()
+
+    local notified
+    local orig = vim.notify
+    vim.notify = function(msg)
+      notified = msg
+    end
+    local sess = notebook_file.open(bufnr, { client = fake_client.new() })
+    vim.notify = orig
+
+    assert.is_not_nil(sess.handle)
+    local text = buf_text(sess.handle.bufnr)
+    assert.truthy(text:find("LegacyTitle", 1, true))
+    assert.truthy(text:find("print('v3')", 1, true))
+    assert.truthy((notified or ""):find("nbformat", 1, true))
+
+    -- :w writes the modern format
+    vim.api.nvim_set_current_buf(bufnr)
+    vim.cmd("write")
+    local saved = vim.json.decode(table.concat(vim.fn.readfile(path), "\n"))
+    assert.equal(4, saved.nbformat)
+    assert.is_nil(saved.worksheets)
+
+    cleanup(bufnr)
+  end)
+
+  it("a JSON file that is no notebook stays a plain buffer, loudly", function()
+    local path = vim.fn.tempname() .. ".ipynb"
+    vim.fn.writefile({ '{"just": "json"}' }, path)
+    vim.cmd("edit " .. path)
+    local bufnr = vim.api.nvim_get_current_buf()
+
+    local notified, level
+    local orig = vim.notify
+    vim.notify = function(msg, lvl)
+      notified, level = msg, lvl
+    end
+    local sess = notebook_file.open(bufnr, { client = fake_client.new() })
+    vim.notify = orig
+
+    assert.is_nil(sess)
+    assert.is_nil(notebook_file._sessions[bufnr])
+    assert.equal('{"just": "json"}', buf_text(bufnr))
+    assert.equal(vim.api.nvim_get_current_buf(), bufnr) -- no UI mounted
+    assert.truthy((notified or ""):find("nbformat", 1, true))
+    assert.equal(vim.log.levels.ERROR, level)
+
+    vim.cmd("silent! bwipeout! " .. bufnr)
+  end)
+end)
+
 describe("notebook_file lifecycle", function()
   it(":q on the notebook window hides the UI; reshowing the buffer remounts it", function()
     local _, bufnr, sess = open_fixture()

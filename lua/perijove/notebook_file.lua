@@ -367,7 +367,13 @@ end
 function remount(sess, winid)
   if vim.api.nvim_buf_get_changedtick(sess.bufnr) ~= sess.raw_tick then
     local text = table.concat(vim.api.nvim_buf_get_lines(sess.bufnr, 0, -1, false), "\n")
-    local doc = ipynb.decode(text)
+    local ok, doc = pcall(ipynb.decode, text)
+    if not ok then
+      -- edited into something unreadable: stay on the raw text, loudly
+      vim.notify("perijove: buffer is not valid nbformat; staying raw: " .. tostring(doc), vim.log.levels.ERROR)
+      sess.raw = true
+      return
+    end
     sess.meta = doc.meta
     mount(sess, doc.cells, winid)
   else
@@ -438,7 +444,23 @@ function M.open(bufnr, opts)
   local text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
   local doc
   if text:find("%S") then
-    doc = ipynb.decode(text)
+    local ok, res = pcall(ipynb.decode, text)
+    if not ok then
+      -- not a notebook we can read: leave the buffer alone, plain vim JSON
+      -- editing included, rather than mount a blank notebook over it
+      if not existing then
+        M._sessions[bufnr] = nil
+      end
+      vim.notify("perijove: cannot open notebook: " .. tostring(res), vim.log.levels.ERROR)
+      return nil
+    end
+    doc = res
+    if doc.upgraded_from then
+      vim.notify(
+        ("perijove: legacy nbformat %d notebook upgraded on read; saving writes nbformat 4"):format(doc.upgraded_from),
+        vim.log.levels.WARN
+      )
+    end
   else
     -- a brand-new notebook: valid skeleton, one empty cell to type into
     doc = { meta = ipynb.new_meta(), cells = { { type = "code", source = "" } } }
