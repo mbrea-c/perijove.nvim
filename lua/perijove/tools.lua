@@ -1,17 +1,19 @@
 -- Resolution of the external tools the default transport shells out to.
 --
--- The nix package substitutes the @curl@/@websocat@ placeholders below with
--- absolute store paths at build time (see flake.nix), so the packaged plugin
--- is closed over the exact binaries it was tested with — reproducible, no
--- PATH dependence. From a plain source checkout the placeholders survive
--- verbatim; we detect the leftover "@" and fall back to a PATH lookup. An
--- explicit override from setup({ tools = { ... } }) beats both.
+-- The nix package substitutes the @curl@/@websocat@/@jupyter@ placeholders
+-- below with absolute store paths at build time (see flake.nix), so the
+-- packaged plugin is closed over the exact binaries it was tested with —
+-- reproducible, no PATH dependence. From a plain source checkout the
+-- placeholders survive verbatim; we detect the leftover "@" and fall back
+-- to a PATH lookup. An explicit override from setup({ tools = { ... } })
+-- beats both.
 
 local M = {}
 
 local NIX = {
   curl = "@curl@/bin/curl",
   websocat = "@websocat@/bin/websocat",
+  ["jupyter-server"] = "@jupyter@/bin/jupyter-server",
 }
 
 local overrides = {}

@@ -3,6 +3,8 @@
 -- notebook" will work — the local case is just the remote case pointed at a
 -- server we happen to own (see README).
 
+local tools = require("perijove.tools")
+
 local M = {}
 
 -- Ask the OS for a free port by binding port 0 and reading back the choice.
@@ -19,14 +21,11 @@ local function random_token()
   return ("%d%d"):format(vim.uv.hrtime(), math.random(1e9)):gsub("%D", "")
 end
 
--- Spawn a server. opts: { cmd? (argv prefix, default jupyter-server),
--- root_dir? }. Returns { base_url, token, stop() } immediately; poll
--- readiness with M.wait_ready.
-function M.spawn(opts)
-  opts = opts or {}
-  local port = free_port()
-  local token = random_token()
-  local argv = vim.list_extend(vim.deepcopy(opts.cmd or { "jupyter-server" }), {
+-- The argv for a local server: an explicit cmd prefix wins; the default
+-- binary resolves through perijove.tools, so the nix package pins
+-- jupyter-server by store path like the transport tools (see flake.nix).
+function M.argv(opts, port, token)
+  return vim.list_extend(vim.deepcopy(opts.cmd or { tools.path("jupyter-server") }), {
     "--ServerApp.ip=127.0.0.1",
     "--ServerApp.port=" .. port,
     "--ServerApp.port_retries=0",
@@ -34,7 +33,16 @@ function M.spawn(opts)
     "--ServerApp.open_browser=False",
     "--ServerApp.root_dir=" .. (opts.root_dir or vim.uv.os_tmpdir()),
   })
-  local proc = vim.system(argv, { text = true })
+end
+
+-- Spawn a server. opts: { cmd? (argv prefix, default jupyter-server),
+-- root_dir? }. Returns { base_url, token, stop() } immediately; poll
+-- readiness with M.wait_ready.
+function M.spawn(opts)
+  opts = opts or {}
+  local port = free_port()
+  local token = random_token()
+  local proc = vim.system(M.argv(opts, port, token), { text = true })
   return {
     base_url = "http://127.0.0.1:" .. port,
     token = token,

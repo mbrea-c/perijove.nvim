@@ -192,8 +192,9 @@ end
 resolvers["local"] = function(spec, cb, opts)
   local localserver = opts.localserver or require("perijove.localserver")
   local transport = opts.transport or require("perijove").transport()
-  if not opts.localserver and vim.fn.executable((spec.cmd or { "jupyter-server" })[1]) == 0 then
-    cb("jupyter-server not on PATH (nix develop provides it)")
+  local jupyter = require("perijove.tools").path("jupyter-server")
+  if not opts.localserver and vim.fn.executable((spec.cmd or { jupyter })[1]) == 0 then
+    cb("jupyter-server not found (the nix package pins one; otherwise PATH or nix develop provides it)")
     return
   end
   local srv = localserver.spawn({ cmd = spec.cmd, root_dir = spec.root_dir })

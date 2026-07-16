@@ -36,11 +36,12 @@
       #   - fibrous is a `dependencies` entry, so dep-flattening plugin
       #     managers (home-manager, nixvim, ...) put it on the runtimepath
       #     automatically;
-      #   - the wire transport's external tools (curl, websocat) are PINNED:
-      #     postPatch substitutes their store paths into lua/perijove/tools.lua,
-      #     closing the plugin over the exact binaries it was tested with. No
-      #     PATH lookups at runtime, fully reproducible. (A source checkout
-      #     keeps the placeholders and falls back to PATH — see tools.lua.)
+      #   - the external tools (curl, websocat, and jupyter-server for the
+      #     builtin local connection) are PINNED: postPatch substitutes their
+      #     store paths into lua/perijove/tools.lua, closing the plugin over
+      #     the exact binaries it was tested with. No PATH lookups at runtime,
+      #     fully reproducible. (A source checkout keeps the placeholders and
+      #     falls back to PATH — see tools.lua.)
       packages = forAllSystems (pkgs: rec {
         default = perijove;
         perijove = pkgs.vimUtils.buildVimPlugin {
@@ -51,7 +52,8 @@
           postPatch = ''
             substituteInPlace lua/perijove/tools.lua \
               --replace-fail "@curl@" "${pkgs.curl}" \
-              --replace-fail "@websocat@" "${pkgs.websocat}"
+              --replace-fail "@websocat@" "${pkgs.websocat}" \
+              --replace-fail "@jupyter@" "${jupyterEnv pkgs}"
           '';
           # the real gate is the test suite (`nix flake check`); the generic
           # require-check chokes on modules that need a running UI

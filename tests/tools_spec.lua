@@ -24,4 +24,11 @@ describe("tools.path", function()
   it("passes unknown names through as PATH lookups", function()
     assert.equal("jq", tools.path("jq"))
   end)
+
+  it("resolves jupyter-server like the transport tools", function()
+    -- source checkout: placeholder unsubstituted, PATH fallback
+    assert.equal("jupyter-server", tools.path("jupyter-server"))
+    tools.configure({ ["jupyter-server"] = "/opt/env/bin/jupyter-server" })
+    assert.equal("/opt/env/bin/jupyter-server", tools.path("jupyter-server"))
+  end)
 end)
