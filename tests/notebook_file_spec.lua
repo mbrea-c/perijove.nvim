@@ -302,6 +302,97 @@ describe("notebook_file buffer freshness", function()
   end)
 end)
 
+describe("notebook_file external changes", function()
+  local function rewrite_on_disk(path, marker)
+    local text = FIXTURE:gsub("print%('from file'%)", marker)
+    vim.fn.writefile(vim.split(text, "\n"), path)
+    -- move the mtime unambiguously: same-second writes are invisible to
+    -- vim's timestamp granularity, and this spec is about detection, not
+    -- about how fast a test can type
+    vim.uv.fs_utime(path, os.time() + 7200, os.time() + 7200)
+  end
+
+  it("our own :w is not an external change (checktime stays quiet)", function()
+    local path = write_fixture()
+    -- vim remembers a FUTURE mtime at read time, so a writefile-style save
+    -- (which cannot update that memory) is guaranteed to look external on
+    -- the next :checktime; a real :write refreshes the bookkeeping
+    vim.uv.fs_utime(path, os.time() + 3600, os.time() + 3600)
+    vim.cmd("edit " .. path)
+    local bufnr = vim.api.nvim_get_current_buf()
+    local sess = notebook_file.open(bufnr, { client = fake_client.new() })
+    vim.api.nvim_buf_call(bufnr, function()
+      vim.cmd("silent write")
+    end)
+    local tick = vim.api.nvim_buf_get_changedtick(bufnr)
+    local store = sess.store
+
+    vim.cmd("silent! checktime")
+    vim.wait(300, function()
+      return false
+    end, 50)
+
+    -- no reload, no re-parse: nvim's mtime bookkeeping saw our write
+    assert.equal(tick, vim.api.nvim_buf_get_changedtick(bufnr))
+    assert.rawequal(store, sess.store)
+    assert.is_false(vim.bo[bufnr].modified)
+    cleanup(bufnr)
+  end)
+
+  it("a clean notebook follows the file: external writes re-parse into the view", function()
+    local path, bufnr, sess = open_fixture()
+    rewrite_on_disk(path, "external_edit = 1")
+
+    vim.cmd("silent! checktime")
+    vim.wait(2000, function()
+      return sess.handle and buf_text(sess.handle.bufnr):find("external_edit = 1", 1, true) ~= nil
+    end, 20)
+
+    assert.truthy(buf_text(sess.handle.bufnr):find("external_edit = 1", 1, true))
+    assert.is_false(vim.bo[bufnr].modified)
+    cleanup(bufnr)
+  end)
+
+  it("a dirty notebook is kept over an external write, with a warning", function()
+    local path, bufnr, sess = open_fixture()
+    sess.store:set_source(sess.store.cells[2].id, "unsaved_work = 1")
+
+    local warned
+    local orig = vim.notify
+    vim.notify = function(msg)
+      warned = msg
+    end
+    rewrite_on_disk(path, "external_edit = 2")
+    vim.cmd("silent! checktime")
+    vim.wait(300, function()
+      return false
+    end, 50)
+    vim.notify = orig
+
+    assert.truthy((warned or ""):find("changed on disk", 1, true))
+    assert.truthy(buf_text(sess.handle.bufnr):find("unsaved_work = 1", 1, true))
+    assert.is_true(vim.bo[bufnr].modified)
+    cleanup(bufnr)
+  end)
+
+  it(":e! takes the disk version, unsaved notebook or not", function()
+    local path, bufnr, sess = open_fixture()
+    sess.store:set_source(sess.store.cells[2].id, "will_be_discarded = 1")
+    rewrite_on_disk(path, "disk_wins = 1")
+
+    vim.api.nvim_buf_call(bufnr, function()
+      vim.cmd("silent edit!")
+    end)
+    vim.wait(2000, function()
+      return sess.handle and buf_text(sess.handle.bufnr):find("disk_wins = 1", 1, true) ~= nil
+    end, 20)
+
+    assert.truthy(buf_text(sess.handle.bufnr):find("disk_wins = 1", 1, true))
+    assert.falsy(buf_text(sess.handle.bufnr):find("will_be_discarded", 1, true))
+    cleanup(bufnr)
+  end)
+end)
+
 describe("notebook_file toggle", function()
   it("drops to current raw JSON and mounts back, keeping the store", function()
     local _, bufnr, sess = open_fixture()

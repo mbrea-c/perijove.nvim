@@ -225,33 +225,38 @@ local function drop_ui(sess)
   sess.unmounting = false
 end
 
+-- Build a fresh store over `cells`, keeping the session's client (a live
+-- kernel survives a re-parse), and point the LSP session at what is a new
+-- notebook document as far as the server is concerned.
+local function adopt(sess, cells)
+  local st = store_mod.new(sess.client)
+  for i, c in ipairs(cells) do
+    st:insert_cell(i, c)
+  end
+  sess.store = st
+  sess.saved_rev = st.content_rev
+  -- content changes mark the FILE buffer modified, vim's own machinery
+  -- then guards :q and drives 'autowriteall' etc.; the debounced refresh
+  -- keeps the raw JSON fresh wherever it is actually visible
+  st:subscribe(function()
+    if st.content_rev ~= sess.saved_rev and vim.api.nvim_buf_is_valid(sess.bufnr) then
+      vim.bo[sess.bufnr].modified = true
+    end
+    schedule_refresh(sess)
+  end)
+  if sess.lsp then
+    sess.lsp:close()
+  end
+  sess.lsp = lsp.attach_for(sess)
+end
+
 -- Mount the view for `sess`. With `cells` given, a fresh store is built
 -- (open, or re-parse after raw edits); without, the existing store — with
 -- its outputs and kernel wiring — is reused (toggle back, remount after a
 -- hide). `winid` is the window to mount over (default: the current one).
 local function mount(sess, cells, winid)
   if cells then
-    local st = store_mod.new(sess.client)
-    for i, c in ipairs(cells) do
-      st:insert_cell(i, c)
-    end
-    sess.store = st
-    sess.saved_rev = st.content_rev
-    -- content changes mark the FILE buffer modified, vim's own machinery
-    -- then guards :q and drives 'autowriteall' etc.; the debounced refresh
-    -- keeps the raw JSON fresh wherever it is actually visible
-    st:subscribe(function()
-      if st.content_rev ~= sess.saved_rev and vim.api.nvim_buf_is_valid(sess.bufnr) then
-        vim.bo[sess.bufnr].modified = true
-      end
-      schedule_refresh(sess)
-    end)
-    -- the LSP session mirrors THIS store; a re-parse (raw edits) is a new
-    -- notebook document as far as the server is concerned
-    if sess.lsp then
-      sess.lsp:close()
-    end
-    sess.lsp = lsp.attach_for(sess)
+    adopt(sess, cells)
   end
   sess.actions = { current = {} }
   sess.raw = false
@@ -351,6 +356,38 @@ local function layout_win_of(bufnr)
   return win
 end
 
+-- The buffer changed under the session (autoread after an external write,
+-- :e/:e! reload): take it in. A fresh store is parsed out of the new text
+-- (same client, live kernel kept) and the view remounted where it was. The
+-- tick guard skips the cases where nothing actually reloaded (a kept buffer
+-- after a dirty-notebook conflict); a raw toggle needs no help (toggle-up
+-- re-parses on its own tick check).
+local function reload_from_buffer(sess)
+  local tick = vim.api.nvim_buf_get_changedtick(sess.bufnr)
+  if tick == sess.raw_tick or sess.raw then
+    return
+  end
+  local text = table.concat(vim.api.nvim_buf_get_lines(sess.bufnr, 0, -1, false), "\n")
+  local ok, doc = pcall(ipynb.decode, text)
+  if not ok then
+    vim.notify("perijove: reloaded ipynb is not valid nbformat; leaving the raw text", vim.log.levels.ERROR)
+    drop_ui(sess)
+    sess.raw = true
+    return
+  end
+  sess.meta = doc.meta
+  sess.raw_tick = tick
+  if sess.handle then
+    local win = sess.handle.host_winid
+    drop_ui(sess)
+    mount(sess, doc.cells, win)
+  else
+    -- hidden: adopt the new document now, so a late refresh can never
+    -- serialize the old store over it; BufWinEnter remounts this store
+    adopt(sess, doc.cells)
+  end
+end
+
 ---------------------------------------------------------------------------
 -- The entry points
 ---------------------------------------------------------------------------
@@ -389,6 +426,9 @@ function M.open(bufnr, opts)
   end
   sess.meta = doc.meta
   mount(sess, doc.cells, layout_win_of(bufnr))
+  -- the buffer as read IS the document we just parsed: the baseline every
+  -- later tick comparison (toggle, remount, external intake) works from
+  sess.raw_tick = vim.api.nvim_buf_get_changedtick(bufnr)
 
   -- :w and friends on the FILE buffer route through the notebook save
   sess.autocmds = {
@@ -420,6 +460,35 @@ function M.open(bufnr, opts)
       callback = function()
         vim.schedule(function()
           M.close(bufnr)
+        end)
+      end,
+    }),
+    -- external writes (jupyter lab on the same file, git checkout): a clean
+    -- notebook follows the file; unsaved work is kept, loudly
+    vim.api.nvim_create_autocmd("FileChangedShell", {
+      buffer = bufnr,
+      callback = function()
+        if sess.store.content_rev ~= sess.saved_rev or vim.bo[bufnr].modified then
+          vim.v.fcs_choice = ""
+          vim.notify(
+            "perijove: "
+              .. vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":t")
+              .. " changed on disk; keeping the unsaved notebook (:e! takes the disk version)",
+            vim.log.levels.WARN
+          )
+        else
+          vim.v.fcs_choice = "reload"
+        end
+      end,
+    }),
+    -- the buffer changed under us (autoread reload, :e/:e!): take it in
+    vim.api.nvim_create_autocmd({ "FileChangedShellPost", "BufReadPost" }, {
+      buffer = bufnr,
+      callback = function()
+        vim.schedule(function()
+          if M._sessions[bufnr] == sess then
+            reload_from_buffer(sess)
+          end
         end)
       end,
     }),
