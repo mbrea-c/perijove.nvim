@@ -134,6 +134,26 @@ unmodified. `<C-j>t` toggles down to the raw JSON (serialized fresh, never
 stale) and back; the store — outputs, kernel session — survives the round
 trip, and raw-JSON edits win by re-parse on the way back up.
 
+### MCP: live notebooks as agent tools
+
+An agent that edits the `.ipynb` file behind nvim's back only meets the
+external-change intake (reload, or keep-with-warning when the notebook has
+unsaved work). `perijove.mcp` exposes the LIVE session instead: tools to
+list open notebooks, list/read/edit/insert/delete cells, run a cell on the
+notebook's kernel and wait for its outputs, and save — all against the
+store, so edits land like a user's (view re-renders, dirty flag set, kernel
+kept).
+
+Wiring follows the dumb-shim pattern: the MCP client spawns
+`nvim -l mcp/shim.lua` from inside a `:terminal` (it finds the parent nvim
+via `$NVIM`) and every JSON-RPC frame is handled in the live nvim. If you
+already run an nvim-mcp style server, skip the shim and plant the same
+tools into it:
+
+```lua
+require("perijove.mcp").register_into(require("nvim-mcp"))
+```
+
 ## UI plan (decided so far)
 
 - Keybinds: ONE prefix — `<C-j>`, configurable via `setup({ prefix = ... })`
