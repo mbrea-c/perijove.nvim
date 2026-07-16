@@ -319,6 +319,63 @@ describe("notebook_file lifecycle", function()
   end)
 end)
 
+describe("notebook_file quit protection", function()
+  it(":q on a modified notebook view fails like a modified buffer; :q! hides", function()
+    local _, bufnr, sess = open_fixture()
+    sess.store:set_source(sess.store.cells[2].id, "unsaved = True")
+
+    -- the view buffer carries the unsaved state, so vim's own machinery
+    -- guards :q (the pane buffer is bufhidden=wipe)
+    assert.is_true(vim.bo[sess.handle.bufnr].modified)
+
+    vim.api.nvim_set_current_win(sess.handle.winid)
+    local ok, err = pcall(vim.cmd, "quit")
+    assert.is_false(ok)
+    assert.truthy(tostring(err):find("E37", 1, true))
+    assert.is_not_nil(sess.handle) -- still mounted, nothing torn down
+
+    -- the bang keeps today's hide semantics: view goes, session survives
+    vim.cmd("quit!")
+    vim.wait(500, function()
+      return sess.handle == nil
+    end, 10)
+    assert.is_nil(sess.handle)
+    assert.rawequal(sess, notebook_file.session_of(bufnr))
+
+    cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+
+  it("saving clears the view buffer's modified flag; a clean view still quits", function()
+    local _, bufnr, sess = open_fixture()
+    assert.is_false(vim.bo[sess.handle.bufnr].modified)
+
+    sess.store:set_source(sess.store.cells[2].id, "then_saved = True")
+    assert.is_true(vim.bo[sess.handle.bufnr].modified)
+
+    notebook_file.save(bufnr)
+    assert.is_false(vim.bo[sess.handle.bufnr].modified)
+
+    -- and a remount over unsaved work is guarded from the start
+    sess.store:set_source(sess.store.cells[2].id, "dirty_again = True")
+    vim.cmd("botright vnew")
+    local other = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_close(vim.fn.bufwinid(bufnr), true)
+    vim.wait(500, function()
+      return sess.handle == nil
+    end, 10)
+    vim.api.nvim_set_current_win(other)
+    vim.cmd("buffer " .. bufnr)
+    vim.wait(500, function()
+      return sess.handle ~= nil
+    end, 10)
+    assert.is_true(vim.bo[sess.handle.bufnr].modified)
+
+    cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+end)
+
 describe("notebook_file buffer freshness", function()
   it("a second window showing the buffer gets fresh JSON as the store changes", function()
     local _, bufnr, sess = open_fixture()

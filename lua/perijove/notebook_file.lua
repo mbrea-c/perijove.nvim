@@ -162,6 +162,48 @@ local function write_buffer(sess, lines, modified)
   sess.raw_tick = vim.api.nvim_buf_get_changedtick(buf)
 end
 
+-- Mirror the notebook's unsaved state onto the mounted view buffer, so
+-- vim's own machinery guards the view like the file it fronts: :q on a
+-- modified view fails (E37, add ! to override), :q! keeps the usual hide.
+local function sync_view_modified(sess)
+  local handle = sess.handle
+  if not handle or not vim.api.nvim_buf_is_valid(handle.bufnr) then
+    return
+  end
+  local dirty = sess.store.content_rev ~= sess.saved_rev
+    or (vim.api.nvim_buf_is_valid(sess.bufnr) and vim.bo[sess.bufnr].modified)
+  vim.bo[handle.bufnr].modified = dirty
+end
+
+-- Make the view buffer carry that guard natively. The fibrous page buffer
+-- is nofile, and nvim force-clears 'modified' on nofile buffers; acwrite
+-- lets the flag stick and routes :w/:wa in the view to the notebook save,
+-- and bufhidden=wipe is what turns an abandoning :q into E37. Fibrous
+-- repaints go through nvim_buf_set_lines, which sets 'modified' as a side
+-- effect, so every paint is followed by a re-sync of the honest value.
+local function guard_view_buffer(sess)
+  local viewbuf = sess.handle.bufnr
+  vim.bo[viewbuf].buftype = "acwrite"
+  vim.bo[viewbuf].bufhidden = "wipe"
+  local name = vim.api.nvim_buf_get_name(sess.bufnr)
+  pcall(vim.api.nvim_buf_set_name, viewbuf, "perijove://" .. (name ~= "" and name or ("buffer-%d"):format(sess.bufnr)))
+  vim.api.nvim_create_autocmd("BufWriteCmd", {
+    buffer = viewbuf,
+    callback = function()
+      M.save(sess.bufnr)
+    end,
+  })
+  vim.api.nvim_buf_attach(viewbuf, false, {
+    on_lines = function()
+      vim.schedule(function()
+        if sess.handle and sess.handle.bufnr == viewbuf then
+          sync_view_modified(sess)
+        end
+      end)
+    end,
+  })
+end
+
 -- When is the buffer worth refreshing eagerly? A rewrite under the mounted
 -- floats repaints the whole covered pane (~2.3KB of terminal bytes per
 -- event, termdraw-measured), so while the mount's pane is the only window
@@ -255,6 +297,7 @@ local function adopt(sess, cells)
     if st.content_rev ~= sess.saved_rev and vim.api.nvim_buf_is_valid(sess.bufnr) then
       vim.bo[sess.bufnr].modified = true
     end
+    sync_view_modified(sess)
     schedule_refresh(sess)
   end)
   if sess.lsp then
@@ -355,6 +398,9 @@ local function mount(sess, cells, winid)
       end
     end)
   end, "switch jupyter connection")
+  -- a remount over unsaved work starts guarded, not clean
+  guard_view_buffer(sess)
+  sync_view_modified(sess)
   -- land the cursor IN the notebook: chords and cell navigation live on the
   -- view's buffer, not the covered file window
   sess.handle.focus()
@@ -572,6 +618,7 @@ function M.save(bufnr)
       vim.bo[b].modified = false
     end)
   end
+  sync_view_modified(sess)
   if sess.lsp then
     sess.lsp:did_save()
   end
