@@ -212,6 +212,19 @@ local function schedule_refresh(sess)
   )
 end
 
+-- The window currently showing `bufnr` in the real layout, or nil. Floats
+-- (previews and the like) don't count: the notebook never mounts over one.
+local function layout_win_of(bufnr)
+  local win = vim.fn.bufwinid(bufnr)
+  if win == -1 or vim.api.nvim_win_get_config(win).relative ~= "" then
+    return nil
+  end
+  return win
+end
+
+-- forward: the mount's on_unmount follows the buffer to a surviving window
+local remount
+
 -- Unmount the view because perijove says so (toggle, close, remount): the
 -- flag keeps the mount's on_unmount from treating it as a user-driven :q.
 local function drop_ui(sess)
@@ -258,6 +271,9 @@ local function mount(sess, cells, winid)
   if cells then
     adopt(sess, cells)
   end
+  -- resolve "current window" NOW: on_unmount below needs to know which
+  -- window was the mount's own, long after current has moved on
+  local host_winid = winid or vim.api.nvim_get_current_win()
   sess.actions = { current = {} }
   sess.raw = false
   sess.handle = nr.mount_window(notebook.Notebook, {
@@ -272,7 +288,7 @@ local function mount(sess, cells, winid)
       end
     end,
   }, {
-    winid = winid or 0,
+    winid = host_winid,
     mode = "scroll",
     keys = notebook.KEYS,
     on_unmount = function()
@@ -283,19 +299,31 @@ local function mount(sess, cells, winid)
       -- The session — store, outputs, kernel — survives; showing the buffer
       -- again remounts it (BufWinEnter in M.open).
       sess.handle = nil
-      if vim.api.nvim_buf_is_valid(sess.bufnr) then
-        sess.raw_tick = vim.api.nvim_buf_get_changedtick(sess.bufnr)
-        -- leave honest JSON behind for grep and friends (cheap: the pane is
-        -- on its way out); refresh also re-advances raw_tick, so the later
-        -- remount reuses the store instead of re-parsing our own write
-        refresh_buffer(sess)
-        -- closing either closes the other: take the buffer's window along
-        -- (a last window survives — vim won't close it — showing raw JSON)
-        local win = vim.fn.bufwinid(sess.bufnr)
-        if win ~= -1 then
-          pcall(vim.api.nvim_win_close, win, false)
-        end
+      if not vim.api.nvim_buf_is_valid(sess.bufnr) then
+        return
       end
+      sess.raw_tick = vim.api.nvim_buf_get_changedtick(sess.bufnr)
+      -- leave honest JSON behind for grep and friends (cheap: the pane is
+      -- on its way out); refresh also re-advances raw_tick, so the later
+      -- remount reuses the store instead of re-parsing our own write
+      refresh_buffer(sess)
+      -- closing either closes the other: the mount's OWN window goes with
+      -- the UI (a last window survives — vim won't close it)
+      if vim.api.nvim_win_is_valid(host_winid) then
+        pcall(vim.api.nvim_win_close, host_winid, false)
+      end
+      -- the view follows the buffer: if some OTHER window still shows it,
+      -- the UI belongs there ("the window the ipynb buffer is open in");
+      -- deferred, teardown is no place to open windows
+      vim.schedule(function()
+        if M._sessions[sess.bufnr] ~= sess or sess.handle or sess.raw then
+          return
+        end
+        local win = layout_win_of(sess.bufnr)
+        if win and win ~= host_winid then
+          remount(sess, win)
+        end
+      end)
     end,
   })
 
@@ -335,7 +363,8 @@ end
 -- Bring the UI back over `winid` after a hide or a raw toggle. Raw edits
 -- win: a changed buffer re-parses into a fresh store (same client, so a
 -- live kernel survives); an untouched one reuses the store as-is.
-local function remount(sess, winid)
+-- (declared forward above: mount's own on_unmount uses it)
+function remount(sess, winid)
   if vim.api.nvim_buf_get_changedtick(sess.bufnr) ~= sess.raw_tick then
     local text = table.concat(vim.api.nvim_buf_get_lines(sess.bufnr, 0, -1, false), "\n")
     local doc = ipynb.decode(text)
@@ -344,16 +373,6 @@ local function remount(sess, winid)
   else
     mount(sess, nil, winid)
   end
-end
-
--- The window currently showing `bufnr` in the real layout, or nil. Floats
--- (previews and the like) don't count: the notebook never mounts over one.
-local function layout_win_of(bufnr)
-  local win = vim.fn.bufwinid(bufnr)
-  if win == -1 or vim.api.nvim_win_get_config(win).relative ~= "" then
-    return nil
-  end
-  return win
 end
 
 -- The buffer changed under the session (autoread after an external write,

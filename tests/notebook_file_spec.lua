@@ -302,6 +302,31 @@ describe("notebook_file buffer freshness", function()
   end)
 end)
 
+describe("notebook_file multi-window", function()
+  it("the view follows the buffer to a surviving window", function()
+    local _, bufnr, sess = open_fixture()
+    local first_host = sess.handle.host_winid
+    vim.cmd("botright vsplit")
+    vim.cmd("buffer " .. bufnr)
+    local second = vim.api.nvim_get_current_win()
+
+    vim.api.nvim_win_close(sess.handle.winid, true) -- :q on the app
+    vim.wait(1000, function()
+      return sess.handle ~= nil and sess.handle.host_winid == second
+    end, 10)
+
+    -- closing either closes the other: the mount's own window went with it;
+    -- but the buffer is still open elsewhere, so the UI moves there instead
+    -- of stranding raw JSON ("the window the ipynb buffer is open in")
+    assert.is_not_nil(sess.handle)
+    assert.equal(second, sess.handle.host_winid)
+    assert.is_false(vim.api.nvim_win_is_valid(first_host))
+
+    cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+end)
+
 describe("notebook_file external changes", function()
   local function rewrite_on_disk(path, marker)
     local text = FIXTURE:gsub("print%('from file'%)", marker)
