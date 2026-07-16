@@ -32,6 +32,21 @@ UI items parked while other work happens. Roughly ordered.
       perijove.json?); today they are in-memory only.
 - [ ] Surface the effective connection name in the notebook status line.
 
+## Notebook LSP (spiked 2026-07-16; follow-ups)
+
+- [ ] Incremental textContent changes (every edit ships the cell's full text
+      today; vim.lsp.sync's diff machinery would cut that to real edits).
+- [ ] Definition/references across cells: results come back on cell URIs,
+      but jumping needs a focus-cell-by-buffer affordance in the view (the
+      target cell's float may not even exist while unfocused).
+- [ ] Completion-plugin integration (an nvim-cmp/blink source keyed off the
+      session, not off attached clients); omnifunc only today.
+- [ ] Honor the server's notebookSelector (code cells are synced
+      unconditionally; markup cells are never synced).
+- [ ] resultId-aware diagnostic pulls (previousResultId + "unchanged"
+      reports; every pull is a full report today).
+- [ ] Signature help, rename, semantic tokens across cells.
+
 ## Kernel UX
 
 - [ ] Password-style stdin (`getpass`): the prompt renders as a normal
@@ -41,6 +56,14 @@ UI items parked while other work happens. Roughly ordered.
       buffer close / VimLeave).
 
 ## Done (this file's graduates)
+
+- [x] Notebook LSP, the proper way: LSP 3.17 notebookDocument sync driven by
+      perijove itself (core neovim has none), cells as cell text documents
+      under vscode-notebook-cell URIs, one shared un-attached client, PULLED
+      diagnostics retargeted onto cell buffers, hover + omnifunc from focused
+      cells. Opt-in via `setup({ lsp = { cmd = ... } })`; proven end to end
+      against basedpyright (cross-cell name resolution and re-analysis) in
+      tests/integration/lsp_notebook_spec.lua.
 
 - [x] Jupyter connections: a plugin-global registry of declarative specs
       (local / remote / command / lua) resolving to endpoints; preconfigured

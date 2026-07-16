@@ -80,7 +80,7 @@
         in
         rec {
           default = demo;
-          test = app "perijove-test" (wireTools pkgs ++ [ (jupyterEnv pkgs) ]) ''
+          test = app "perijove-test" (wireTools pkgs ++ [ (jupyterEnv pkgs) pkgs.basedpyright ]) ''
             export FIBROUS_PATH="''${FIBROUS_PATH:-${fibrous}}"
             cd ${self}
             exec nvim --headless -u NONE -i NONE -l tests/run.lua "$@"
@@ -110,6 +110,8 @@
             pkgs.curl
             pkgs.websocat
             (jupyterEnv pkgs)
+            # notebook LSP integration spec (skips itself when missing)
+            pkgs.basedpyright
           ];
         };
       });
@@ -128,6 +130,7 @@
                 pkgs.curl
                 pkgs.websocat
                 (jupyterEnv pkgs)
+                pkgs.basedpyright
               ];
             }
             ''

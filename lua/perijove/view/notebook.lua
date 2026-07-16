@@ -83,9 +83,11 @@ vim.api.nvim_create_autocmd("ColorScheme", {
 -- When the view is wired to a file (props.on_cell_write), cell buffers are
 -- NAMED acwrite buffers, so :w inside a focused cell routes to the notebook
 -- save instead of erroring on a nameless scratch buffer.
-local function ensure_buf(slot, cell, on_cell_write, ft)
+local function ensure_buf(slot, cell, on_cell_write, ft, on_cell_buf)
   local buf = slot.bufs[cell.id]
+  local created = false
   if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    created = true
     buf = vim.api.nvim_create_buf(false, true)
     vim.bo[buf].bufhidden = "hide"
     if on_cell_write then
@@ -109,6 +111,11 @@ local function ensure_buf(slot, cell, on_cell_write, ft)
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(cell.source, "\n"))
     slot.synced[cell.id] = cell.source
     vim.bo[buf].modified = false
+  end
+  -- announce AFTER the initial fill, so a listener attaching to the buffer
+  -- sees edits only (the fill is already known store-side)
+  if created and on_cell_buf then
+    on_cell_buf(cell, buf)
   end
   return buf
 end
@@ -314,7 +321,7 @@ M._probe = { cell_renders = 0 }
 local function CodeCell(_, props)
   M._probe.cell_renders = M._probe.cell_renders + 1
   local store, slot, cell, on_cell_write = props.store, props.slot, props.cell, props.on_cell_write
-  local buf = ensure_buf(slot, cell, on_cell_write, "python")
+  local buf = ensure_buf(slot, cell, on_cell_write, "python", props.on_cell_buf)
   local mark = cell.execution_count and ("In [" .. cell.execution_count .. "]") or "In [ ]"
   local sync = function()
     store:set_source(cell.id, buf_text(buf))
@@ -547,7 +554,7 @@ local function MarkdownCell(ctx, props)
     }
   end
 
-  local buf = ensure_buf(slot, cell, props.on_cell_write, "markdown")
+  local buf = ensure_buf(slot, cell, props.on_cell_write, "markdown", props.on_cell_buf)
   if not slot.md_mapped[cell.id] then
     slot.md_mapped[cell.id] = true
     vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
@@ -732,6 +739,7 @@ function M.Notebook(ctx, props)
         rev = cell.rev,
         preview = M.preview, -- busts the memo when the global flag flips
         on_cell_write = props.on_cell_write,
+        on_cell_buf = props.on_cell_buf,
       },
     }
   end

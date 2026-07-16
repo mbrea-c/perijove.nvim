@@ -11,10 +11,11 @@ the architecture; this file records the working conventions.
   `make test` (working tree) or `make test-file FILE=...` for one spec.
   Unit specs must never touch the network or spawn servers — anything that
   can be pure (argv construction, parsing, correlation) is a pure function
-  or fake-driven with unit specs. The ONE exception is
-  tests/integration/real_kernel_spec.lua: loopback-only, real
-  jupyter-server + curl + websocat, and it skips itself (loudly) when
-  jupyter-server is not on PATH — `nix develop` provides it.
+  or fake-driven with unit specs. The exceptions live in tests/integration/
+  only: real_kernel_spec.lua (loopback-only, real jupyter-server + curl +
+  websocat) and lsp_notebook_spec.lua (real basedpyright over stdio). Each
+  skips itself (loudly) when its binary is not on PATH — `nix develop`
+  provides both.
 - `make` may be missing from PATH in some sandboxes; the direct invocation is
   `nvim --headless -u NONE -i NONE -l tests/run.lua [spec]`.
 - fibrous during development comes from `FIBROUS_PATH` (defaults to the

@@ -23,6 +23,10 @@ local function default_config()
     -- (a perijove.json default, an explicit selection) says otherwise
     connections = {},
     default_connection = nil,
+    -- notebook LSP: perijove drives LSP 3.17 notebookDocument sync itself
+    -- (core neovim has none). Opt in with a notebook-capable server, e.g.
+    -- lsp = { cmd = { "basedpyright-langserver", "--stdio" } }; no cmd = off.
+    lsp = {},
   }
 end
 
@@ -37,6 +41,7 @@ function M.setup(opts)
   config = vim.tbl_deep_extend("force", config, opts or {})
   require("perijove.tools").configure(config.tools)
   require("perijove.view.notebook").configure({ prefix = config.prefix })
+  require("perijove.lsp").configure(config.lsp)
 
   local connections = require("perijove.connections")
   for _, spec in ipairs(config.connections) do

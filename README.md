@@ -97,6 +97,34 @@ creates one interactively (in-memory; persist it via `setup()` or
 `perijove.json` default > `setup()` default > `local`. Whatever is picked,
 nothing dials until the first run.
 
+### Notebook LSP
+
+perijove speaks LSP 3.17 **notebookDocument synchronization**, the protocol
+notebook-aware language servers already know from VSCode: the notebook is one
+document, each code cell a cell text document with its own URI, and the server
+analyzes them as one module, in cell order. No concatenated shadow buffer, no
+per-cell standalone files. Core Neovim has no notebook support, so perijove
+drives the protocol itself (`lua/perijove/lsp/`), never buffer-attaching the
+client (that would double-sync cells as ordinary files).
+
+Opt in with a notebook-capable server (basedpyright is the tested one):
+
+```lua
+require("perijove").setup({
+  lsp = { cmd = { "basedpyright-langserver", "--stdio" } },
+})
+```
+
+What you get today: diagnostics with cross-cell name resolution (a variable
+defined in cell 1 resolves in cell 2; editing cell 1 re-analyzes cell 2),
+placed on the right cell buffers; hover on `K` inside a focused cell;
+completion via omnifunc (`<C-x><C-o>`). Cell add/delete/move/retype and the
+raw-JSON round trip keep the server's view in sync. Diagnostics are PULLED
+(`textDocument/diagnostic`), which is what notebook servers actually
+implement: the session pulls after every change and on server refresh
+requests. One server instance is shared per project root; each notebook is
+its own document.
+
 Saving rides vim's own file semantics: `:w` — on the notebook, inside a
 focused cell buffer (they are named acwrite buffers), `:wa`, anything —
 syncs cell buffers into the store, serializes to nbformat (sorted keys,

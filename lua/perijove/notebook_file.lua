@@ -23,6 +23,7 @@ local notebook = require("perijove.view.notebook")
 local lazy = require("perijove.client.lazy")
 local connections = require("perijove.connections")
 local project = require("perijove.connections.project")
+local lsp = require("perijove.lsp")
 
 local M = {}
 
@@ -140,6 +141,12 @@ local function mount(sess, cells)
         vim.bo[sess.bufnr].modified = true
       end
     end)
+    -- the LSP session mirrors THIS store; a re-parse (raw edits) is a new
+    -- notebook document as far as the server is concerned
+    if sess.lsp then
+      sess.lsp:close()
+    end
+    sess.lsp = lsp.attach_for(sess)
   end
   sess.actions = { current = {} }
   sess.handle = nr.mount_window(notebook.Notebook, {
@@ -147,6 +154,11 @@ local function mount(sess, cells)
     actions = sess.actions,
     on_cell_write = function()
       M.save(sess.bufnr)
+    end,
+    on_cell_buf = function(cell, buf)
+      if sess.lsp then
+        sess.lsp:register_buf(cell.id, buf)
+      end
     end,
   }, { winid = 0, mode = "scroll", keys = notebook.KEYS })
 
@@ -257,6 +269,9 @@ function M.save(bufnr)
       vim.bo[b].modified = false
     end)
   end
+  if sess.lsp then
+    sess.lsp:did_save()
+  end
 end
 
 -- Flip between the notebook UI and the raw JSON buffer.
@@ -308,6 +323,9 @@ function M.close(bufnr)
   end
   if sess.endpoint and sess.endpoint.stop then
     pcall(sess.endpoint.stop)
+  end
+  if sess.lsp then
+    sess.lsp:close()
   end
   M._sessions[bufnr] = nil
 end
