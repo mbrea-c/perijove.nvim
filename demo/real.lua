@@ -4,11 +4,11 @@
 --   nix run .#demo-real            (brings all three)
 --   nix develop -c make demo-real  (ditto, against the working tree)
 --
--- Same keybinds as the scripted demo (the seed's first cell lists them):
--- everything is a chord under <C-j> — per-cell r/<CR>/o/O/d/J/K/m/e/c/C,
--- notebook-wide a run-all, i interrupt, R restart, x clear-all, q quit.
--- Being real python, the input() cell actually prompts and the rich-output
--- cell comes back as rendered markdown with math.
+-- Like the scripted demo, this goes through the plugin's own path: the seed
+-- cells become an in-memory .ipynb buffer opened via notebook_file, with the
+-- connected server client injected. Same keybinds (the seed's first cell
+-- lists them). Being real python, the input() cell actually prompts and the
+-- rich-output cell comes back as rendered markdown with math.
 
 local here = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h")
 local root = vim.fn.fnamemodify(here, ":h")
@@ -30,11 +30,11 @@ if vim.fn.executable("jupyter-server") == 0 then
   vim.cmd("cquit 1")
 end
 
-local nr = require("fibrous")
-local store = require("perijove.store")
+local notebook_file = require("perijove.notebook_file")
 local localserver = require("perijove.localserver")
 local transport = require("perijove.transport")
 local server_client = require("perijove.client.server")
+local ipynb = require("perijove.ipynb")
 local notebook = require("perijove.view.notebook")
 local seed = require("demo.seed")
 
@@ -54,7 +54,6 @@ local client = server_client.new({
   base_url = srv.base_url,
   token = srv.token,
 })
-local st = store.new(client)
 
 print("perijove: starting kernel…")
 local connect_err, connected
@@ -69,25 +68,15 @@ if not connected or connect_err then
   vim.cmd("cquit 1")
 end
 
-seed.fill(st)
+local buf = vim.api.nvim_create_buf(true, false)
+vim.api.nvim_win_set_buf(0, buf)
+local json = ipynb.encode(ipynb.new_meta(), seed.cells())
+vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(json:gsub("\n$", ""), "\n"))
+vim.bo[buf].modified = false
 
-local handle = nr.mount_window(notebook.Notebook, { store = st }, { winid = 0, mode = "scroll", keys = notebook.KEYS })
-handle.focus()
+notebook_file.open(buf, { client = client })
 
-local prefix = notebook.PREFIX
-vim.keymap.set("n", prefix .. "a", function()
-  st:run_all()
-end, { desc = "perijove: run all cells" })
-vim.keymap.set("n", prefix .. "i", function()
-  st:interrupt()
-end, { desc = "perijove: interrupt the kernel" })
-vim.keymap.set("n", prefix .. "R", function()
-  st:restart()
-end, { desc = "perijove: restart the kernel" })
-vim.keymap.set("n", prefix .. "x", function()
-  st:clear_all_outputs()
-end, { desc = "perijove: clear all outputs" })
-vim.keymap.set("n", prefix .. "q", function()
+vim.keymap.set("n", notebook.PREFIX .. "q", function()
   vim.cmd("qa!")
 end, { desc = "perijove: quit the demo" })
 

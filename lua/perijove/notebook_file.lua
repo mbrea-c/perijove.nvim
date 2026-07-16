@@ -277,12 +277,16 @@ function M.open(bufnr, opts)
   end
   local sess = existing or { bufnr = bufnr }
   M._sessions[bufnr] = sess
-  -- project-level connections (perijove.json, resolved upward from the file)
-  local proj, perr = project.load_for(vim.api.nvim_buf_get_name(bufnr))
-  if perr then
-    vim.notify("perijove: " .. perr, vim.log.levels.WARN)
+  -- project-level connections (perijove.json, resolved upward from the
+  -- file); an unnamed buffer (in-memory notebooks, the demos) has no project
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  if name ~= "" then
+    local proj, perr = project.load_for(name)
+    if perr then
+      vim.notify("perijove: " .. perr, vim.log.levels.WARN)
+    end
+    sess.project = proj
   end
-  sess.project = proj
   sess.client = (opts and opts.client) or lazy.new(connection_factory(sess))
 
   local text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
@@ -348,6 +352,11 @@ end
 function M.save(bufnr)
   local sess = M._sessions[bufnr]
   if not sess then
+    return
+  end
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  if name == "" then
+    vim.notify("perijove: no file name (:saveas one first)", vim.log.levels.WARN)
     return
   end
   local lines = serialize(sess)

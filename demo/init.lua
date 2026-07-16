@@ -1,18 +1,19 @@
 -- Demo entry point: a clean Neovim (`nvim --clean -u demo/init.lua`, or
 -- `make demo` / `nix run .#demo`) with perijove and fibrous on the path,
 -- showing the notebook view against the SCRIPTED kernel client — no jupyter,
--- no network. Mounted over the REAL current window (not a float), like
--- actual usage will be.
+-- no network.
 --
--- Keybinds are chords under the perijove prefix (<C-j>, see view/notebook.lua
--- and the seed's first cell): per-cell r/<CR>/o/O/d/J/K/m/e/c/C, plus
---   <C-j>a  run all cells
---   <C-j>i  interrupt the kernel (try it on the sleep cell)
---   <C-j>x  clear all outputs
---   <C-j>q  quit the demo
--- Plus the fibrous basics: hjkl glides over cells; <CR>/i on a code cell
--- enters its real buffer (hjkl at the edge steps back out); hover a [run]
--- button and press <CR>/<Space>.
+-- The demo takes the plugin's own path, not a shortcut: the seed cells are
+-- serialized into an in-memory .ipynb buffer and opened through
+-- notebook_file, so everything a real file gets works here too — the mount
+-- over the buffer's window, the <C-j> chords, <C-j>t toggling down to the
+-- raw JSON this buffer actually holds, hide-and-remount on window close.
+-- Only :w differs: the buffer has no name, so saving asks for :saveas.
+--
+-- Keybinds are chords under the perijove prefix (<C-j>, the seed's first
+-- cell lists them). Plus the fibrous basics: hjkl glides over cells;
+-- <CR>/i on a code cell enters its real buffer (hjkl at the edge steps back
+-- out); hover a [run] button and press <CR>/<Space>.
 
 -- Resolve paths from this file's own location, not the cwd, so the nix app
 -- (`-u /nix/store/...-source/demo/init.lua`) works from anywhere.
@@ -31,30 +32,23 @@ package.path = table.concat({
   package.path,
 }, ";")
 
-local nr = require("fibrous")
-local store = require("perijove.store")
+local notebook_file = require("perijove.notebook_file")
 local scripted = require("perijove.client.scripted")
+local ipynb = require("perijove.ipynb")
 local notebook = require("perijove.view.notebook")
 local seed = require("demo.seed")
 
-local st = store.new(scripted.new())
-seed.fill(st)
+-- An in-memory notebook: an unnamed listed buffer holding real nbformat
+-- JSON, shown in the current (only) window — a notebook is a document you
+-- open, not a popup.
+local buf = vim.api.nvim_create_buf(true, false)
+vim.api.nvim_win_set_buf(0, buf)
+local json = ipynb.encode(ipynb.new_meta(), seed.cells())
+vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(json:gsub("\n$", ""), "\n"))
+vim.bo[buf].modified = false
 
--- Over the current (only) window — a notebook is a document you open, not a
--- popup. `keys` routes the run chord to the cell under the cursor.
-local handle = nr.mount_window(notebook.Notebook, { store = st }, { winid = 0, mode = "scroll", keys = notebook.KEYS })
-handle.focus()
+notebook_file.open(buf, { client = scripted.new() })
 
-local prefix = notebook.PREFIX
-vim.keymap.set("n", prefix .. "a", function()
-  st:run_all()
-end, { desc = "perijove: run all cells" })
-vim.keymap.set("n", prefix .. "i", function()
-  st:interrupt()
-end, { desc = "perijove: interrupt the kernel" })
-vim.keymap.set("n", prefix .. "x", function()
-  st:clear_all_outputs()
-end, { desc = "perijove: clear all outputs" })
-vim.keymap.set("n", prefix .. "q", function()
+vim.keymap.set("n", notebook.PREFIX .. "q", function()
   vim.cmd("qa!")
 end, { desc = "perijove: quit the demo" })

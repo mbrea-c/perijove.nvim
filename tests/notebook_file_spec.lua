@@ -109,6 +109,32 @@ describe("notebook_file save", function()
   end)
 end)
 
+describe("notebook_file in-memory buffers", function()
+  it("opens an unnamed ipynb buffer (the demo path) and refuses a nameless save", function()
+    local buf = vim.api.nvim_create_buf(true, false)
+    vim.api.nvim_win_set_buf(0, buf)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(FIXTURE, "\n"))
+    vim.bo[buf].modified = false
+
+    local sess = notebook_file.open(buf, { client = fake_client.new() })
+    assert.is_not_nil(sess.handle)
+    assert.truthy(buf_text(sess.handle.bufnr):find("NbTitle", 1, true))
+
+    -- no file name: saving must say so, not error out of writefile
+    local notified
+    local orig = vim.notify
+    vim.notify = function(msg)
+      notified = msg
+    end
+    local ok = pcall(notebook_file.save, buf)
+    vim.notify = orig
+    assert.is_true(ok)
+    assert.truthy((notified or ""):find("no file name", 1, true))
+
+    cleanup(buf)
+  end)
+end)
+
 describe("notebook_file lifecycle", function()
   it(":q on the notebook window hides the UI; reshowing the buffer remounts it", function()
     local _, bufnr, sess = open_fixture()
