@@ -10,6 +10,10 @@
 --           flags clear — you always save what you see;
 --   dirty   store content changes (content_rev) set the file buffer's
 --           'modified', so :q protection guards unsaved notebook work;
+--   fresh   the buffer's JSON is refreshed (debounced) whenever someone can
+--           actually see it — a second window, a hidden buffer — and stays
+--           lazy while the mount's pane is its only window, because a
+--           rewrite under the floats repaints the whole covered pane;
 --   toggle  <C-j>t drops to the raw JSON (serialized fresh from the store,
 --           never stale) and back. The store — outputs, kernel session —
 --           survives the round trip; editing the raw JSON while toggled
@@ -128,6 +132,86 @@ local function chord(buf, key, fn, desc)
   vim.keymap.set("n", notebook.PREFIX .. key, fn, { buffer = buf, desc = "perijove: " .. desc })
 end
 
+---------------------------------------------------------------------------
+-- Store -> buffer serialization
+---------------------------------------------------------------------------
+
+-- Serialize the store into nbformat lines (the file's content). Cell
+-- sub-buffers are pulled into the store first while the view is up, so you
+-- always serialize what you see.
+local function serialize(sess)
+  local sync = sess.actions and sess.actions.current.sync_to_store
+  if sync then
+    sync()
+  end
+  local text = ipynb.encode(sess.meta, sess.store.cells)
+  return vim.split(text:gsub("\n$", ""), "\n")
+end
+
+-- Rewrite the file buffer as perijove's OWN edit: no undo entry (the user
+-- never made this change, and u must not resurrect stale JSON), and
+-- raw_tick advanced so toggle/remount keep treating the buffer as untouched
+-- by the user.
+local function write_buffer(sess, lines, modified)
+  local buf = sess.bufnr
+  local ul = vim.bo[buf].undolevels
+  vim.bo[buf].undolevels = -1
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].undolevels = ul
+  vim.bo[buf].modified = modified
+  sess.raw_tick = vim.api.nvim_buf_get_changedtick(buf)
+end
+
+-- When is the buffer worth refreshing eagerly? A rewrite under the mounted
+-- floats repaints the whole covered pane (~2.3KB of terminal bytes per
+-- event, termdraw-measured), so while the mount's pane is the only window
+-- the buffer stays lazy: save/toggle/hide serialize fresh, and the modified
+-- flag is honest throughout. Someone LOOKING at the raw JSON (a second
+-- window, a preview float) gets it eagerly; a hidden notebook keeps its
+-- buffer honest for grep and friends; a raw toggle owns the text, hands off.
+local function buffer_refresh_due(sess)
+  if sess.raw then
+    return false
+  end
+  if not sess.handle then
+    return true
+  end
+  for _, win in ipairs(vim.fn.win_findbuf(sess.bufnr)) do
+    if win ~= sess.handle.host_winid then
+      return true
+    end
+  end
+  return false
+end
+
+local function refresh_buffer(sess)
+  if not vim.api.nvim_buf_is_valid(sess.bufnr) or not buffer_refresh_due(sess) then
+    return
+  end
+  local dirty = vim.bo[sess.bufnr].modified or sess.store.content_rev ~= sess.saved_rev
+  write_buffer(sess, serialize(sess), dirty)
+end
+
+local REFRESH_DEBOUNCE_MS = 200
+
+-- Debounced: store changes come in bursts (streaming outputs, run-all), one
+-- serialization per quiet gap is plenty for eyes on a side window.
+local function schedule_refresh(sess)
+  if not sess.refresh_timer then
+    sess.refresh_timer = vim.uv.new_timer()
+  end
+  sess.refresh_timer:stop()
+  sess.refresh_timer:start(
+    REFRESH_DEBOUNCE_MS,
+    0,
+    vim.schedule_wrap(function()
+      if M._sessions[sess.bufnr] == sess then
+        refresh_buffer(sess)
+      end
+    end)
+  )
+end
+
 -- Unmount the view because perijove says so (toggle, close, remount): the
 -- flag keeps the mount's on_unmount from treating it as a user-driven :q.
 local function drop_ui(sess)
@@ -154,11 +238,13 @@ local function mount(sess, cells, winid)
     sess.store = st
     sess.saved_rev = st.content_rev
     -- content changes mark the FILE buffer modified, vim's own machinery
-    -- then guards :q and drives 'autowriteall' etc.
+    -- then guards :q and drives 'autowriteall' etc.; the debounced refresh
+    -- keeps the raw JSON fresh wherever it is actually visible
     st:subscribe(function()
       if st.content_rev ~= sess.saved_rev and vim.api.nvim_buf_is_valid(sess.bufnr) then
         vim.bo[sess.bufnr].modified = true
       end
+      schedule_refresh(sess)
     end)
     -- the LSP session mirrors THIS store; a re-parse (raw edits) is a new
     -- notebook document as far as the server is concerned
@@ -194,6 +280,10 @@ local function mount(sess, cells, winid)
       sess.handle = nil
       if vim.api.nvim_buf_is_valid(sess.bufnr) then
         sess.raw_tick = vim.api.nvim_buf_get_changedtick(sess.bufnr)
+        -- leave honest JSON behind for grep and friends (cheap: the pane is
+        -- on its way out); refresh also re-advances raw_tick, so the later
+        -- remount reuses the store instead of re-parsing our own write
+        refresh_buffer(sess)
         -- closing either closes the other: take the buffer's window along
         -- (a last window survives — vim won't close it — showing raw JSON)
         local win = vim.fn.bufwinid(sess.bufnr)
@@ -340,15 +430,11 @@ function M.open(bufnr, opts)
   return sess
 end
 
--- Serialize the store into nbformat lines (the file's content).
-local function serialize(sess)
-  sess.actions.current.sync_to_store()
-  local text = ipynb.encode(sess.meta, sess.store.cells)
-  return vim.split(text:gsub("\n$", ""), "\n")
-end
-
 -- Write the notebook to its file: sync cell buffers, serialize, refresh the
--- raw buffer, clear every modified flag.
+-- raw buffer, clear every modified flag. While the user is editing the raw
+-- JSON (toggled down), the BUFFER is the document: writing the store here
+-- would clobber their edits, so the buffer text goes to disk as-is and the
+-- next toggle-up re-parses it.
 function M.save(bufnr)
   local sess = M._sessions[bufnr]
   if not sess then
@@ -359,12 +445,19 @@ function M.save(bufnr)
     vim.notify("perijove: no file name (:saveas one first)", vim.log.levels.WARN)
     return
   end
-  local lines = serialize(sess)
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-  vim.fn.writefile(lines, vim.api.nvim_buf_get_name(bufnr))
+  local lines
+  if sess.raw and vim.api.nvim_buf_get_changedtick(bufnr) ~= sess.raw_tick then
+    -- raw edits in flight: save them verbatim; raw_tick stays behind the
+    -- buffer's tick on purpose, so toggle-up still knows to re-parse
+    lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  else
+    lines = serialize(sess)
+    write_buffer(sess, lines, false)
+    sess.saved_rev = sess.store.content_rev
+  end
+  vim.fn.writefile(lines, name)
   vim.bo[bufnr].modified = false
-  sess.saved_rev = sess.store.content_rev
-  if sess.actions.current.each_cell_buf then
+  if sess.actions and sess.actions.current.each_cell_buf then
     sess.actions.current.each_cell_buf(function(b)
       vim.bo[b].modified = false
     end)
@@ -383,10 +476,7 @@ function M.toggle(bufnr)
   if sess.handle then
     -- down to raw: serialize the CURRENT store so the JSON is never stale
     local was_dirty = vim.bo[bufnr].modified or sess.store.content_rev ~= sess.saved_rev
-    local lines = serialize(sess)
-    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-    vim.bo[bufnr].modified = was_dirty
-    sess.raw_tick = vim.api.nvim_buf_get_changedtick(bufnr)
+    write_buffer(sess, serialize(sess), was_dirty)
     sess.raw = true -- deliberate: BufWinEnter must not remount over the raw view
     drop_ui(sess)
     -- land the cursor on the raw JSON, wherever focus fell after the floats
@@ -407,6 +497,11 @@ function M.close(bufnr)
     return
   end
   drop_ui(sess)
+  if sess.refresh_timer then
+    sess.refresh_timer:stop()
+    sess.refresh_timer:close()
+    sess.refresh_timer = nil
+  end
   for _, au in ipairs(sess.autocmds or {}) do
     pcall(vim.api.nvim_del_autocmd, au)
   end

@@ -236,6 +236,72 @@ describe("notebook_file lifecycle", function()
   end)
 end)
 
+describe("notebook_file buffer freshness", function()
+  it("a second window showing the buffer gets fresh JSON as the store changes", function()
+    local _, bufnr, sess = open_fixture()
+    -- the raw JSON alongside the notebook: only now is eager serialization
+    -- worth its redraw cost (a covered pane rewrite is ~2.3KB of terminal
+    -- bytes per event; with no second window the buffer stays lazy)
+    vim.cmd("botright vsplit")
+    vim.cmd("buffer " .. bufnr)
+
+    sess.store:set_source(sess.store.cells[2].id, "second_window_sees = 1")
+    vim.wait(2000, function()
+      return buf_text(bufnr):find("second_window_sees", 1, true) ~= nil
+    end, 20)
+
+    assert.truthy(buf_text(bufnr):find("second_window_sees", 1, true))
+    assert.is_true(vim.bo[bufnr].modified) -- still unsaved, honestly so
+    cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+
+  it("hiding the notebook leaves current JSON in the buffer, and remount reuses the store", function()
+    local _, bufnr, sess = open_fixture()
+    local store_before = sess.store
+    sess.store:set_source(sess.store.cells[2].id, "hidden_fresh = 1")
+
+    vim.cmd("botright vnew")
+    local other = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_close(vim.fn.bufwinid(bufnr), true)
+    vim.wait(500, function()
+      return sess.handle == nil
+    end, 10)
+
+    -- the hidden buffer is honest: grep and friends see the real document
+    assert.truthy(buf_text(bufnr):find("hidden_fresh = 1", 1, true))
+
+    -- and our own write did not fool the remount into a re-parse
+    vim.api.nvim_set_current_win(other)
+    vim.cmd("buffer " .. bufnr)
+    vim.wait(500, function()
+      return sess.handle ~= nil
+    end, 10)
+    assert.rawequal(store_before, sess.store)
+    cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+
+  it(":w while toggled to raw writes the buffer text, not the stale store", function()
+    local path, bufnr, sess = open_fixture()
+    notebook_file.toggle(bufnr)
+    local raw = buf_text(bufnr):gsub("from file", "raw wins")
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(raw, "\n"))
+
+    vim.api.nvim_buf_call(bufnr, function()
+      vim.cmd("silent write")
+    end)
+
+    local on_disk = table.concat(vim.fn.readfile(path), "\n")
+    assert.truthy(on_disk:find("raw wins", 1, true))
+    assert.is_false(vim.bo[bufnr].modified)
+    -- toggling back re-parses the saved raw edits
+    notebook_file.toggle(bufnr)
+    assert.truthy(buf_text(sess.handle.bufnr):find("raw wins", 1, true))
+    cleanup(bufnr)
+  end)
+end)
+
 describe("notebook_file toggle", function()
   it("drops to current raw JSON and mounts back, keeping the store", function()
     local _, bufnr, sess = open_fixture()
