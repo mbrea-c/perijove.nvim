@@ -346,6 +346,38 @@ describe("notebook_file quit protection", function()
     vim.cmd("silent! only")
   end)
 
+  it("typing in a cell buffer marks the view modified, so :q guards the edit", function()
+    local _, bufnr, sess = open_fixture()
+    assert.is_false(vim.bo[sess.handle.bufnr].modified)
+
+    -- edit the code cell through its real buffer, like a user typing in the
+    -- focused float: the text lives ONLY there until a run/save syncs it into
+    -- the store, and unmount force-deletes cell buffers — an unguarded :q
+    -- would discard the edit silently
+    local cellbuf
+    sess.actions.current.each_cell_buf(function(b)
+      cellbuf = b
+    end)
+    vim.api.nvim_buf_set_lines(cellbuf, 0, -1, false, { "typed_only = 1" })
+    vim.wait(500, function()
+      return vim.bo[sess.handle.bufnr].modified
+    end, 10)
+    assert.is_true(vim.bo[sess.handle.bufnr].modified)
+
+    vim.api.nvim_set_current_win(sess.handle.winid)
+    local ok, err = pcall(vim.cmd, "quit")
+    assert.is_false(ok)
+    assert.truthy(tostring(err):find("E37", 1, true))
+    assert.is_not_nil(sess.handle)
+
+    -- saving takes the text in and releases the guard
+    notebook_file.save(bufnr)
+    assert.is_false(vim.bo[sess.handle.bufnr].modified)
+
+    cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+
   it("saving clears the view buffer's modified flag; a clean view still quits", function()
     local _, bufnr, sess = open_fixture()
     assert.is_false(vim.bo[sess.handle.bufnr].modified)

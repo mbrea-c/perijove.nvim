@@ -165,6 +165,9 @@ end
 -- Mirror the notebook's unsaved state onto the mounted view buffer, so
 -- vim's own machinery guards the view like the file it fronts: :q on a
 -- modified view fails (E37, add ! to override), :q! keeps the usual hide.
+-- Cell BUFFERS count as unsaved state too: typed text lives only there until
+-- a run/save syncs it into the store (content_rev never moved), and unmount
+-- force-deletes the buffers — without this, :q discards the edit silently.
 local function sync_view_modified(sess)
   local handle = sess.handle
   if not handle or not vim.api.nvim_buf_is_valid(handle.bufnr) then
@@ -172,6 +175,11 @@ local function sync_view_modified(sess)
   end
   local dirty = sess.store.content_rev ~= sess.saved_rev
     or (vim.api.nvim_buf_is_valid(sess.bufnr) and vim.bo[sess.bufnr].modified)
+  if not dirty and sess.actions and sess.actions.current.each_cell_buf then
+    sess.actions.current.each_cell_buf(function(b)
+      dirty = dirty or vim.bo[b].modified
+    end)
+  end
   vim.bo[handle.bufnr].modified = dirty
 end
 
@@ -329,6 +337,21 @@ local function mount(sess, cells, winid)
       if sess.lsp then
         sess.lsp:register_buf(cell.id, buf)
       end
+      -- typing in a cell is unsaved notebook work the moment it happens:
+      -- re-derive the view's modified flag on every edit (deferred — the
+      -- 'modified' side effect settles after on_lines returns)
+      vim.api.nvim_buf_attach(buf, false, {
+        on_lines = function()
+          if M._sessions[sess.bufnr] ~= sess then
+            return true -- detach: the session moved on
+          end
+          vim.schedule(function()
+            if M._sessions[sess.bufnr] == sess then
+              sync_view_modified(sess)
+            end
+          end)
+        end,
+      })
     end,
   }, {
     winid = host_winid,
