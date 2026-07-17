@@ -385,7 +385,9 @@ local function CodeCell(_, props)
   }
   local editor = {
     comp = ui.raw_buffer,
-    props = { bufnr = buf, render = "focus", style = { border = true } },
+    -- capture_cursor: a focused cell holds the cursor (edge hjkl and
+    -- <C-d>/<C-u> stay native edits/motions); <Esc> is the deliberate exit
+    props = { bufnr = buf, render = "focus", capture_cursor = true, style = { border = true } },
   }
   local children = { header, editor }
   children[#children + 1] = outputs_node(cell)
@@ -600,7 +602,11 @@ local function MarkdownCell(ctx, props)
       comp = ui.col,
       props = { grow = 1 },
       children = {
-        { comp = ui.raw_buffer, props = { bufnr = buf, render = "always", style = { border = true } } },
+        {
+          comp = ui.raw_buffer,
+          -- same capture as code cells: <Esc>/jump ends editing, hjkl never
+          props = { bufnr = buf, render = "always", capture_cursor = true, style = { border = true } },
+        },
       },
     },
   }

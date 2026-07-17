@@ -587,4 +587,27 @@ describe("view.notebook", function()
     assert.truthy(text_of(handle.bufnr):find("after", 1, true))
     handle.unmount()
   end)
+
+  it("a focused code cell captures the cursor: edge hjkl stay put, <Esc> exits", function()
+    local st = new_pair()
+    st:insert_cell(1, { type = "code", source = "only_line = 1" })
+    local handle = mount_nb(st)
+
+    -- focus the cell (activation from its mirror)
+    press_at(handle, "only_line", "<CR>")
+    local cellwin = vim.api.nvim_get_current_win()
+    assert.is_true(cellwin ~= handle.winid)
+
+    -- edge motions in every direction: the cell holds the cursor
+    for _, key in ipairs({ "k", "j", "h" }) do
+      vim.api.nvim_feedkeys(key, "xt", false)
+      assert.equal(cellwin, vim.api.nvim_get_current_win())
+    end
+
+    -- the deliberate exit still works
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "xt", false)
+    assert.equal(handle.winid, vim.api.nvim_get_current_win())
+
+    handle.unmount()
+  end)
 end)
