@@ -6,11 +6,11 @@
 -- notebook exactly like a user's, the view re-renders, the kernel stays,
 -- and dirty/save semantics apply.
 --
--- The protocol host is the shared nvim-mcp plugin: one MCP server per nvim,
--- a dumb stdio shim (`nvim -l <nvim-mcp>/shim.lua`, spawned by the MCP
+-- The protocol host is the shared clankbox plugin: one MCP server per nvim,
+-- a dumb stdio shim (`nvim -l <clankbox>/shim.lua`, spawned by the MCP
 -- client from inside a :terminal) relaying each JSON-RPC frame into the live
 -- nvim. perijove is a pure tool PROVIDER — setup() plants these tools into
--- nvim-mcp when it is installed (a pcall'd soft dependency; nothing here
+-- clankbox when it is installed (a pcall'd soft dependency; nothing here
 -- requires it), and register_into() plants them into anything exposing
 -- register_tool(name, def).
 
@@ -293,7 +293,7 @@ tools.notebook_save = {
 
 M.tools = tools
 
--- Plant these tools into an nvim-mcp style server (anything exposing
+-- Plant these tools into a clankbox style server (anything exposing
 -- register_tool(name, def)), so one MCP server carries them all.
 function M.register_into(server)
   for name, def in pairs(tools) do

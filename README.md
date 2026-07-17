@@ -145,11 +145,11 @@ store, so edits land like a user's (view re-renders, dirty flag set, kernel
 kept).
 
 The MCP host is the separate
-[nvim-mcp](https://github.com/mbrea-c/nvim-mcp) plugin: one server per
-nvim, a dumb stdio shim (`nvim -l <nvim-mcp>/shim.lua`, spawned by the MCP
+[clankbox.nvim](https://github.com/mbrea-c/clankbox.nvim) plugin: one server per
+nvim, a dumb stdio shim (`nvim -l <clankbox.nvim>/shim.lua`, spawned by the MCP
 client from inside a `:terminal`, finding the parent via `$NVIM`), protocol
 and tool registry running in the live nvim. perijove is a pure tool
-provider: when nvim-mcp is installed, `setup()` registers the `notebook_*`
+provider: when clankbox is installed, `setup()` registers the `notebook_*`
 tools into it automatically, and nothing in perijove requires it. Any
 server exposing `register_tool(name, def)` works:
 

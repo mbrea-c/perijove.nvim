@@ -1,8 +1,8 @@
 -- The MCP surface: live notebooks as tools for external agents. The protocol
--- host (JSON-RPC, shim, tools/list) lives in the separate nvim-mcp plugin;
+-- host (JSON-RPC, shim, tools/list) lives in the separate clankbox plugin;
 -- perijove only PROVIDES tool defs, planted via register_into(). Specs drive
 -- the handlers through a fake server table, against a real session over the
--- fake kernel client — no network, no shim, no nvim-mcp dependency.
+-- fake kernel client — no network, no shim, no clankbox dependency.
 
 local notebook_file = require("perijove.notebook_file")
 local mcp = require("perijove.mcp")
@@ -39,7 +39,7 @@ local function cleanup(bufnr)
   vim.cmd("silent! bwipeout! " .. bufnr)
 end
 
--- an nvim-mcp shaped server, reduced to what the tools touch
+-- a clankbox shaped server, reduced to what the tools touch
 local function fake_server()
   local srv = { tools = {} }
   function srv.register_tool(name, def)
@@ -85,11 +85,11 @@ describe("mcp registration", function()
     assert.truthy(text:find("no notebook", 1, true))
   end)
 
-  it("setup() plants the tools into an installed nvim-mcp", function()
+  it("setup() plants the tools into an installed clankbox", function()
     local fake = fake_server()
-    package.loaded["nvim-mcp"] = fake
+    package.loaded["clankbox"] = fake
     require("perijove").setup({ auto_open = false })
-    package.loaded["nvim-mcp"] = nil
+    package.loaded["clankbox"] = nil
     require("perijove")._reset_config()
     assert.is_not_nil(fake.tools.notebook_list)
     assert.is_not_nil(fake.tools.notebook_save)

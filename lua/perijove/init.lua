@@ -55,11 +55,11 @@ function M.setup(opts)
   local notebook_file = require("perijove.notebook_file")
   notebook_file.setup_autocmds(config.auto_open)
 
-  -- when the shared nvim-mcp server plugin is installed, plant the notebook
+  -- when the shared clankbox server plugin is installed, plant the notebook
   -- tools into it (soft dependency: nothing in perijove requires it)
-  local has_mcp, nvim_mcp = pcall(require, "nvim-mcp")
+  local has_mcp, clankbox = pcall(require, "clankbox")
   if has_mcp then
-    require("perijove.mcp").register_into(nvim_mcp)
+    require("perijove.mcp").register_into(clankbox)
   end
 
   -- :Perijove                open/toggle the notebook UI (as always)
