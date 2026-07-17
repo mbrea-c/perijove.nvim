@@ -145,4 +145,51 @@ describe("lsp wiring", function()
     cleanup(bufnr)
     assert.equal(1, #sent(clients[1], "notebookDocument/didClose"))
   end)
+
+  it("unconfigured LSP hints exactly once instead of failing silently", function()
+    -- a silent nil from attach_for is how "LSPs are not loading" went
+    -- undiagnosed for days: the session must say so, once
+    lsp.configure({})
+    local msgs = {}
+    local orig = vim.notify
+    vim.notify = function(msg)
+      msgs[#msgs + 1] = tostring(msg)
+    end
+    local b1 = open_fixture()
+    local b2 = open_fixture()
+    vim.notify = orig
+
+    local hints = 0
+    for _, m in ipairs(msgs) do
+      if m:find("notebook LSP not configured", 1, true) then
+        hints = hints + 1
+      end
+    end
+    assert.equal(1, hints)
+    assert.equal(0, #clients) -- and no client was made
+    cleanup(b1)
+    cleanup(b2)
+  end)
+
+  it("a configured but missing binary warns once", function()
+    lsp.configure({ cmd = { "definitely-not-a-real-langserver-xyz", "--stdio" } })
+    local msgs = {}
+    local orig = vim.notify
+    vim.notify = function(msg)
+      msgs[#msgs + 1] = tostring(msg)
+    end
+    local b1 = open_fixture()
+    local b2 = open_fixture()
+    vim.notify = orig
+
+    local warns = 0
+    for _, m in ipairs(msgs) do
+      if m:find("not executable", 1, true) then
+        warns = warns + 1
+      end
+    end
+    assert.equal(1, warns)
+    cleanup(b1)
+    cleanup(b2)
+  end)
 end)

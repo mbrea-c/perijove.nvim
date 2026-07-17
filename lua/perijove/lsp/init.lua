@@ -22,6 +22,7 @@ M._sessions = {} -- live sessions (a set), for server-initiated refreshes
 
 function M.configure(opts)
   M._config = opts or {}
+  M._hinted = false -- re-arm the one-shot configuration hints below
 end
 
 local Session = {}
@@ -342,14 +343,29 @@ local function start_client(cmd, path)
 end
 
 -- The notebook_file entry point: a session for `sess`'s store, on the
--- configured server. Nil (quietly) when LSP is not configured or the binary
--- is missing; `client_factory` is the test seam.
+-- configured server. Nil when LSP is not configured or the binary is
+-- missing — but never QUIETLY nil: a one-shot hint per configure() says
+-- why (a silent nil is how "LSPs are not loading" goes undiagnosed).
+-- `client_factory` is the test seam.
 function M.attach_for(sess)
   local client
   if M._config.client_factory then
     client = M._config.client_factory()
   elseif M._config.cmd then
     client = start_client(M._config.cmd, vim.api.nvim_buf_get_name(sess.bufnr))
+    if not client and not M._hinted then
+      M._hinted = true
+      vim.notify(
+        ("perijove: LSP cmd %q not executable; notebook LSP off"):format(tostring(M._config.cmd[1])),
+        vim.log.levels.WARN
+      )
+    end
+  elseif not M._hinted then
+    M._hinted = true
+    vim.notify(
+      'perijove: notebook LSP not configured; setup({ lsp = { cmd = { "basedpyright-langserver", "--stdio" } } }) enables it',
+      vim.log.levels.INFO
+    )
   end
   if not client then
     return nil
