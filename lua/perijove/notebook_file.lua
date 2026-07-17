@@ -21,7 +21,8 @@
 --           kernel survives even that);
 --   close   the UI and the buffer's window live and die together. :q on
 --           either app window hides the notebook (store, outputs and kernel
---           survive; showing the buffer again remounts, jupyter-style);
+--           survive; showing the buffer again remounts, jupyter-style); in
+--           the LAST layout window :q quits vim, like :q on any file;
 --           deleting or wiping the BUFFER closes the whole session, kernel
 --           shutdown included.
 
@@ -130,6 +131,12 @@ end
 
 local function chord(buf, key, fn, desc)
   vim.keymap.set("n", notebook.PREFIX .. key, fn, { buffer = buf, desc = "perijove: " .. desc })
+end
+
+-- :q's endgame when the notebook window is the last one standing (a seam:
+-- the test suite must observe the quit, not perform it).
+function M._quit()
+  vim.cmd("quit")
 end
 
 ---------------------------------------------------------------------------
@@ -374,9 +381,25 @@ local function mount(sess, cells, winid)
       -- remount reuses the store instead of re-parsing our own write
       refresh_buffer(sess)
       -- closing either closes the other: the mount's OWN window goes with
-      -- the UI (a last window survives — vim won't close it)
+      -- the UI. The very last layout window is vim's to keep, and leaving
+      -- it showing raw JSON is not what :q on a notebook means — there :q
+      -- does what :q on any file does: quit vim. Plain :quit, so an unsaved
+      -- buffer elsewhere still vetoes with its usual error (a :q! on the
+      -- view whose FILE buffer is dirty stops here too; a second :q!
+      -- finishes the job).
       if vim.api.nvim_win_is_valid(host_winid) then
         pcall(vim.api.nvim_win_close, host_winid, false)
+        if vim.api.nvim_win_is_valid(host_winid) then
+          vim.schedule(function()
+            if M._sessions[sess.bufnr] ~= sess or sess.handle or not vim.api.nvim_win_is_valid(host_winid) then
+              return
+            end
+            -- re-attempt: the layout may have changed since the tick began
+            if not pcall(vim.api.nvim_win_close, host_winid, false) then
+              pcall(M._quit)
+            end
+          end)
+        end
       end
       -- the view follows the buffer: if some OTHER window still shows it,
       -- the UI belongs there ("the window the ipynb buffer is open in");

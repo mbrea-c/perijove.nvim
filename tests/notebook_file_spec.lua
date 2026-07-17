@@ -346,6 +346,30 @@ describe("notebook_file quit protection", function()
     vim.cmd("silent! only")
   end)
 
+  it(":q in the last window quits vim instead of stranding the raw JSON", function()
+    vim.cmd("silent! only")
+    local _, bufnr, sess = open_fixture()
+
+    -- seam: really quitting would take the test run with it
+    local quits = 0
+    local orig_quit = notebook_file._quit
+    notebook_file._quit = function()
+      quits = quits + 1
+    end
+
+    vim.api.nvim_set_current_win(sess.handle.winid)
+    vim.cmd("quit")
+    vim.wait(500, function()
+      return quits > 0
+    end, 10)
+    notebook_file._quit = orig_quit
+
+    assert.equal(1, quits)
+    -- had vim stayed (an unsaved buffer vetoed), the session is still whole
+    assert.rawequal(sess, notebook_file.session_of(bufnr))
+    cleanup(bufnr)
+  end)
+
   it("typing in a cell buffer marks the view modified, so :q guards the edit", function()
     local _, bufnr, sess = open_fixture()
     assert.is_false(vim.bo[sess.handle.bufnr].modified)
