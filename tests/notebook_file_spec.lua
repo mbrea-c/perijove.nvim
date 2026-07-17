@@ -320,7 +320,8 @@ describe("notebook_file lifecycle", function()
 end)
 
 describe("notebook_file quit protection", function()
-  it(":q on a modified notebook view fails like a modified buffer; :q! hides", function()
+  it(":q on a modified notebook view fails like a modified buffer; :q! discards in one shot", function()
+    vim.cmd("silent! only")
     local _, bufnr, sess = open_fixture()
     sess.store:set_source(sess.store.cells[2].id, "unsaved = True")
 
@@ -334,15 +335,57 @@ describe("notebook_file quit protection", function()
     assert.truthy(tostring(err):find("E37", 1, true))
     assert.is_not_nil(sess.handle) -- still mounted, nothing torn down
 
-    -- the bang keeps today's hide semantics: view goes, session survives
+    -- the bang discards: view goes, session survives, and the bang covers
+    -- the FILE buffer too — in the last layout window the quit must land on
+    -- the first :q!, not stall on our own modified flag for a second one
+    local quits = 0
+    local orig_quit = notebook_file._quit
+    notebook_file._quit = function()
+      quits = quits + 1
+    end
     vim.cmd("quit!")
     vim.wait(500, function()
-      return sess.handle == nil
+      return quits > 0
     end, 10)
+    notebook_file._quit = orig_quit
+
     assert.is_nil(sess.handle)
     assert.rawequal(sess, notebook_file.session_of(bufnr))
+    assert.equal(1, quits)
+    assert.is_false(vim.bo[bufnr].modified)
 
     cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+
+  it(":q! in a split closes the pane and takes the buffer's veto with it", function()
+    vim.cmd("silent! only")
+    -- a second layout window: the quit endgame is a window close, not exit
+    vim.cmd("botright vnew")
+    local scratch = vim.api.nvim_get_current_buf()
+    local other = vim.api.nvim_get_current_win()
+    vim.cmd("wincmd p")
+    local _, bufnr, sess = open_fixture()
+    local host = sess.handle.host_winid
+    sess.store:set_source(sess.store.cells[2].id, "discard_me = True")
+    assert.is_true(vim.bo[sess.handle.bufnr].modified)
+
+    vim.api.nvim_set_current_win(sess.handle.winid)
+    vim.cmd("quit!")
+    vim.wait(500, function()
+      return not vim.api.nvim_win_is_valid(host)
+    end, 10)
+
+    assert.is_false(vim.api.nvim_win_is_valid(host))
+    -- the hidden buffer must not veto a later :q/:qa — that dirtiness is
+    -- exactly what the bang discarded (the session still holds it: showing
+    -- the buffer again remounts, guarded from the start)
+    assert.is_false(vim.bo[bufnr].modified)
+    assert.rawequal(sess, notebook_file.session_of(bufnr))
+
+    vim.api.nvim_set_current_win(other)
+    cleanup(bufnr)
+    vim.cmd("silent! bwipeout! " .. scratch)
     vim.cmd("silent! only")
   end)
 

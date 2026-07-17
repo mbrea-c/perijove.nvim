@@ -22,7 +22,10 @@
 --   close   the UI and the buffer's window live and die together. :q on
 --           either app window hides the notebook (store, outputs and kernel
 --           survive; showing the buffer again remounts, jupyter-style); in
---           the LAST layout window :q quits vim, like :q on any file;
+--           the LAST layout window :q quits vim, like :q on any file; :q!
+--           on a modified view discards in ONE shot — the bang covers the
+--           file buffer's mirrored dirtiness too, so only unsaved work
+--           elsewhere can still veto;
 --           deleting or wiping the BUFFER closes the whole session, kernel
 --           shutdown included.
 
@@ -217,6 +220,28 @@ local function guard_view_buffer(sess)
       end)
     end,
   })
+  -- :q! (or ZQ) on a modified view is the user discarding the notebook's
+  -- unsaved work, and the bang must cover the FILE buffer too — its
+  -- 'modified' mirrors the very state being discarded, and left set it
+  -- vetoes the window close / last-window quit in on_unmount. A plain :q
+  -- on a modified view is stopped by E37 before any teardown, so "modified
+  -- at QuitPre, buffer wiped anyway" can only be a forced quit (:wq lands
+  -- here too, harmlessly: the save already cleared every flag). The check
+  -- is deferred one tick: past the quit's outcome, still ahead of the
+  -- mount's own deferred teardown.
+  vim.api.nvim_create_autocmd("QuitPre", {
+    buffer = viewbuf,
+    callback = function()
+      if M._sessions[sess.bufnr] ~= sess or not vim.bo[viewbuf].modified then
+        return
+      end
+      vim.schedule(function()
+        if M._sessions[sess.bufnr] == sess and not vim.api.nvim_buf_is_valid(viewbuf) then
+          sess.force_discard = true
+        end
+      end)
+    end,
+  })
 end
 
 -- When is the buffer worth refreshing eagerly? A rewrite under the mounted
@@ -380,13 +405,20 @@ local function mount(sess, cells, winid)
       -- on its way out); refresh also re-advances raw_tick, so the later
       -- remount reuses the store instead of re-parsing our own write
       refresh_buffer(sess)
+      -- a forced quit discarded the notebook's unsaved work: the bang
+      -- covers the file buffer, or our own modified flag would veto the
+      -- close/quit below (armed in guard_view_buffer's QuitPre)
+      if sess.force_discard then
+        sess.force_discard = nil
+        vim.bo[sess.bufnr].modified = false
+      end
       -- closing either closes the other: the mount's OWN window goes with
       -- the UI. The very last layout window is vim's to keep, and leaving
       -- it showing raw JSON is not what :q on a notebook means — there :q
       -- does what :q on any file does: quit vim. Plain :quit, so an unsaved
-      -- buffer elsewhere still vetoes with its usual error (a :q! on the
-      -- view whose FILE buffer is dirty stops here too; a second :q!
-      -- finishes the job).
+      -- buffer ELSEWHERE still vetoes with its usual error; the notebook's
+      -- own dirtiness was either already saved (:q refuses otherwise) or
+      -- explicitly discarded by the bang above.
       if vim.api.nvim_win_is_valid(host_winid) then
         pcall(vim.api.nvim_win_close, host_winid, false)
         if vim.api.nvim_win_is_valid(host_winid) then
