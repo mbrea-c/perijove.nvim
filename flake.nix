@@ -25,10 +25,13 @@
         "aarch64-darwin"
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
-      # a real jupyter for the integration spec and the demo-real app
+      # a real jupyter for the integration spec and the demo-real app;
+      # matplotlib backs the inline-image demo cell (ipykernel's bundled
+      # matplotlib-inline backend emits display_data image/png on plt.show)
       jupyterEnv = pkgs: pkgs.python3.withPackages (ps: [
         ps.jupyter-server
         ps.ipykernel
+        ps.matplotlib
       ]);
     in
     {

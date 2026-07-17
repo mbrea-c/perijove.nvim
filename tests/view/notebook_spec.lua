@@ -481,7 +481,7 @@ describe("view.notebook", function()
     handle.unmount()
   end)
 
-  it("dispatches rich output mimes: markdown, latex math, image placeholder", function()
+  it("dispatches rich output mimes: markdown, latex math, image alt fallback", function()
     local st, client = new_pair()
     local a = st:insert_cell(1, { type = "code", source = "x" })
     local handle = mount_nb(st)
@@ -489,6 +489,7 @@ describe("view.notebook", function()
     local h = client:last().handlers
     h.on_display({ ["text/markdown"] = "**BoldWord** plain tail" }, {})
     h.on_display({ ["text/latex"] = "$\\alpha + \\beta$", ["text/plain"] = "<latex obj>" }, {})
+    -- not decodable as a PNG, so ui.image degrades to the alt text on ANY provider
     h.on_display({ ["image/png"] = "aGVsbG8=", ["text/plain"] = "<Figure 640x480>" }, {})
     h.on_done({ status = "ok", execution_count = 1 })
     local text = text_of(handle.bufnr)
@@ -498,6 +499,50 @@ describe("view.notebook", function()
     assert.truthy(text:find("<Figure 640x480>", 1, true)) -- image degrades to text/plain
     assert.truthy(text:find("image/png", 1, true)) -- ...but says what it is
     handle.unmount()
+  end)
+
+  it("renders image/png outputs as inline placeholder cells (kitty provider)", function()
+    local image = require("fibrous.image")
+    local kitty = require("fibrous.image.kitty")
+    image.reset()
+    image.config.provider = "kitty"
+    image.config.cell_px = { w = 10, h = 20 }
+    local written = {}
+    image.config.writer = function(data)
+      written[#written + 1] = data
+    end
+
+    -- a sniffable 30x40 px PNG header (3 cols x 2 rows at 10x20), wrapped in
+    -- newlines the way ipynb stores base64
+    local function be32(n)
+      return string.char(
+        math.floor(n / 2 ^ 24) % 256,
+        math.floor(n / 2 ^ 16) % 256,
+        math.floor(n / 2 ^ 8) % 256,
+        n % 256
+      )
+    end
+    local b64 = vim.base64.encode("\137PNG\r\n\26\10" .. be32(13) .. "IHDR" .. be32(30) .. be32(40) .. "\8\6\0\0\0")
+    b64 = b64:sub(1, 8) .. "\n" .. b64:sub(9)
+
+    local st, client = new_pair()
+    local a = st:insert_cell(1, { type = "code", source = "plot()" })
+    local handle = mount_nb(st)
+    st:run_cell(a)
+    local h = client:last().handlers
+    h.on_display({ ["image/png"] = b64, ["text/plain"] = "<Figure 30x40>" }, {})
+    h.on_done({ status = "ok", execution_count = 1 })
+
+    local text = text_of(handle.bufnr)
+    assert.truthy(text:find(kitty.cell(0, 0), 1, true)) -- placeholder grid in the buffer
+    assert.truthy(text:find(kitty.cell(1, 2), 1, true))
+    assert.falsy(text:find("<Figure 30x40>", 1, true)) -- alt only shows when degraded
+    assert.equal(1, #written) -- transmitted once
+    assert.truthy(written[1]:find("a=T,U=1", 1, true))
+
+    handle.unmount()
+    vim.wait(50)
+    image.reset()
   end)
 
   it("folds and clears outputs with prefix-c / prefix-C", function()

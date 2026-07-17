@@ -43,6 +43,19 @@ function M.cells()
     },
     {
       type = "code",
+      source = table.concat({
+        "# image outputs render inline on kitty/ghostty (alt text elsewhere)",
+        "import numpy as np",
+        "import matplotlib.pyplot as plt",
+        "x = np.linspace(0, 4 * np.pi, 200)",
+        "plt.figure(figsize=(6, 3))",
+        "plt.plot(x, np.sin(x) * np.exp(-x / 8))",
+        "plt.title('an inline figure')",
+        "plt.show()",
+      }, "\n"),
+    },
+    {
+      type = "code",
       source = 'name = input("who runs this notebook? ")\nprint(f"hi, {name}")',
     },
     {

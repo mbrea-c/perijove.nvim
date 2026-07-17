@@ -141,8 +141,10 @@ end
 
 -- A result/display mime bundle, best representation first: markdown and
 -- latex render rich (ui.markdown handles $...$ through the fibrous math
--- renderer), images degrade to their text/plain repr plus an honest label
--- (real image output is pending), anything else falls back to text/plain.
+-- renderer), image/png renders inline through ui.image (kitty Unicode
+-- placeholders; on terminals without support it degrades to the alt text
+-- below), image/jpeg still degrades to text/plain (PNG-only v1), anything
+-- else falls back to text/plain.
 local function mime_node(data)
   if data["text/markdown"] then
     return { comp = ui.markdown, props = { text = data["text/markdown"] } }
@@ -150,12 +152,22 @@ local function mime_node(data)
   if data["text/latex"] then
     return { comp = ui.markdown, props = { text = data["text/latex"] } }
   end
-  local image = (data["image/png"] and "image/png") or (data["image/jpeg"] and "image/jpeg")
-  if image then
+  if data["image/png"] then
+    return {
+      comp = ui.image,
+      props = {
+        b64 = data["image/png"],
+        max_cols = 100,
+        max_rows = 40,
+        alt = (data["text/plain"] or "<image>"):gsub("%s*$", "") .. " (image/png)",
+      },
+    }
+  end
+  if data["image/jpeg"] then
     local children = text_lines(data["text/plain"] or "<image>")
     children[#children + 1] = {
       comp = ui.text,
-      props = { text = "(" .. image .. " output; inline images pending)", style = { text_hl = "Comment" } },
+      props = { text = "(image/jpeg output; only PNG renders inline)", style = { text_hl = "Comment" } },
     }
     return { comp = ui.col, props = {}, children = children }
   end
