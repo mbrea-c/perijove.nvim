@@ -265,3 +265,41 @@ describe("client.server restart", function()
     assert.equal(BASE .. "/api/kernels/kern-1/restart", last.url)
   end)
 end)
+
+describe("client.server kernelspecs", function()
+  it("lists the server's kernelspecs, normalized and name-sorted", function()
+    local t = fake_transport({
+      ["GET " .. BASE .. "/api/kernelspecs"] = {
+        body = {
+          default = "python3",
+          kernelspecs = {
+            ["python3"] = { name = "python3", spec = { display_name = "Python 3 (ipykernel)" } },
+            ["julia-1.10"] = { name = "julia-1.10", spec = { display_name = "Julia 1.10" } },
+          },
+        },
+      },
+    })
+    local got
+    server.list_kernelspecs({ transport = t, base_url = BASE, token = "sekrit" }, function(err, specs)
+      got = { err = err, specs = specs }
+    end)
+    assert.is_nil(got.err)
+    assert.equal("python3", got.specs.default)
+    assert.same({
+      { name = "julia-1.10", display_name = "Julia 1.10" },
+      { name = "python3", display_name = "Python 3 (ipykernel)" },
+    }, got.specs.kernels)
+    -- the request carried auth, like every other server call
+    assert.equal("token sekrit", t.requests[1].headers["Authorization"])
+  end)
+
+  it("reports a failed listing through the callback", function()
+    local t = fake_transport({})
+    local got
+    server.list_kernelspecs({ transport = t, base_url = BASE }, function(err, specs)
+      got = { err = err, specs = specs }
+    end)
+    assert.truthy(got.err)
+    assert.is_nil(got.specs)
+  end)
+end)

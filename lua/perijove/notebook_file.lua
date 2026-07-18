@@ -89,6 +89,7 @@ local function connection_factory(sess)
         base_url = ep.base_url,
         token = ep.token,
         headers = ep.headers,
+        kernel_name = sess.kernel,
         path = vim.api.nvim_buf_get_name(sess.bufnr),
       })
       client:connect(function(cerr)
@@ -106,17 +107,11 @@ local function connection_factory(sess)
   end
 end
 
--- Point a live notebook at another connection: the old kernel (and its
--- endpoint: tunnel, local server) goes away NOW, queued and running cells
--- settle locally (a switched-away kernel never answers), outputs stay, and
--- the next run boots on the new connection.
-function M.set_connection(bufnr, name)
-  local sess = M.session_of(bufnr)
-  if not sess then
-    return
-  end
-  assert(connections.view(sess.project).get(name), ("perijove: unknown connection %q"):format(tostring(name)))
-  sess.connection = name
+-- Tear down a live session's kernel and endpoint and re-arm the lazy client:
+-- queued and running cells settle locally (a switched-away kernel never
+-- answers), outputs stay, and the next run boots whatever the session's
+-- connection/kernel selection now says.
+local function rebase(sess)
   local old_ep = sess.endpoint
   sess.endpoint = nil
   if sess.client.rebase then
@@ -126,6 +121,95 @@ function M.set_connection(bufnr, name)
     pcall(old_ep.stop)
   end
   sess.store:restart()
+end
+
+-- Point a live notebook at another connection: the old kernel (and its
+-- endpoint: tunnel, local server) goes away NOW; the next run boots on the
+-- new connection.
+function M.set_connection(bufnr, name)
+  local sess = M.session_of(bufnr)
+  if not sess then
+    return
+  end
+  assert(connections.view(sess.project).get(name), ("perijove: unknown connection %q"):format(tostring(name)))
+  sess.connection = name
+  rebase(sess)
+end
+
+-- The kernel the notebook's NEXT boot asks for: the explicit selection, else
+-- the client's shipped default.
+function M.kernel_of(bufnr)
+  local sess = M.session_of(bufnr)
+  if not sess then
+    return nil
+  end
+  return sess.kernel or require("perijove.client.server").DEFAULT_KERNEL
+end
+
+-- Switch a live notebook to another kernelspec: same teardown as a
+-- connection switch (the session binding is per-kernel server-side, so the
+-- endpoint is re-resolved and the next run boots the new kernel).
+function M.set_kernel(bufnr, name)
+  local sess = M.session_of(bufnr)
+  if not sess then
+    return
+  end
+  assert(type(name) == "string" and name ~= "", "perijove: kernel name must be a non-empty string")
+  sess.kernel = name
+  rebase(sess)
+end
+
+-- The jupyter config window (requests.md): connection + kernel dropdowns over
+-- the merged registry+project catalog, live-wired to set_connection /
+-- set_kernel. Works OUTSIDE a notebook too — the connection pick then sets
+-- the global default and there is no kernel field. A booted session's server
+-- is asked for its kernelspecs (async) to fill the kernel dropdown.
+function M.open_config(bufnr)
+  local sess = M.session_of(bufnr)
+  local view = connections.view(sess and sess.project)
+  local ConfigWindow = require("perijove.view.config_window")
+  local handle
+
+  handle = ConfigWindow.open({
+    connections = view.list(),
+    current = sess and M.connection_of(sess.bufnr) or view.default(),
+    default_name = view.default(),
+    kernel = sess and M.kernel_of(sess.bufnr) or nil,
+    on_connection = function(name)
+      if sess then
+        M.set_connection(sess.bufnr, name)
+      else
+        connections.set_default(name)
+      end
+    end,
+    on_kernel = sess and function(name)
+      M.set_kernel(sess.bufnr, name)
+    end or nil,
+    on_new = function()
+      require("perijove.connections.ui").create(function()
+        if handle.is_open() then
+          handle.set_connections(view.list())
+        end
+      end)
+    end,
+  })
+
+  local ep = sess and sess.endpoint
+  if ep then
+    require("perijove.client.server").list_kernelspecs({
+      transport = ep.transport or require("perijove").transport(),
+      base_url = ep.base_url,
+      token = ep.token,
+      headers = ep.headers,
+    }, function(err, specs)
+      vim.schedule(function()
+        if not err and specs and handle.is_open() then
+          handle.set_kernels(specs.kernels)
+        end
+      end)
+    end)
+  end
+  return handle
 end
 
 ---------------------------------------------------------------------------
@@ -476,6 +560,9 @@ local function mount(sess, cells, winid)
       end
     end)
   end, "switch jupyter connection")
+  chord(sess.handle.bufnr, "S", function()
+    M.open_config(sess.bufnr)
+  end, "jupyter config window")
   -- a remount over unsaved work starts guarded, not clean
   guard_view_buffer(sess)
   sync_view_modified(sess)

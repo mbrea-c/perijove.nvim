@@ -16,6 +16,63 @@ local M = {}
 local Client = {}
 Client.__index = Client
 
+-- The kernel a session boots when nothing chose one (also the fallback the
+-- config UI shows before a selection).
+M.DEFAULT_KERNEL = "python3"
+
+-- Auth/extra headers for a server call: `headers` is a table, or a function
+-- returning one, re-read per request (dynamic creds); `token` becomes the
+-- Authorization header. Shared by the client (via :_headers) and the
+-- endpoint-level helpers below.
+local function build_headers(token, headers)
+  local h = {}
+  local extra = headers
+  if type(extra) == "function" then
+    extra = extra()
+  end
+  for k, v in pairs(extra or {}) do
+    h[k] = v
+  end
+  if token then
+    h["Authorization"] = "token " .. token
+  end
+  return h
+end
+
+-- List the server's kernelspecs (GET /api/kernelspecs) against a bare
+-- endpoint — no Client needed, so the config UI can ask any resolved
+-- connection what kernels it offers. cb(err, { default, kernels }) with
+-- kernels normalized to a name-sorted list of { name, display_name }.
+-- opts: { transport, base_url, token?, headers? }
+function M.list_kernelspecs(opts, cb)
+  opts.transport:request({
+    method = "GET",
+    url = opts.base_url:gsub("/$", "") .. "/api/kernelspecs",
+    headers = build_headers(opts.token, opts.headers),
+  }, function(res)
+    if not res.ok or (res.status or 200) >= 300 then
+      cb(("kernelspec listing failed: %s"):format(res.error or res.status))
+      return
+    end
+    local ok, parsed = pcall(vim.json.decode, res.body)
+    if not ok or type(parsed) ~= "table" then
+      cb("kernelspec listing failed: bad response body")
+      return
+    end
+    local kernels = {}
+    for name, spec in pairs(parsed.kernelspecs or {}) do
+      kernels[#kernels + 1] = {
+        name = name,
+        display_name = spec.spec and spec.spec.display_name or name,
+      }
+    end
+    table.sort(kernels, function(a, b)
+      return a.name < b.name
+    end)
+    cb(nil, { default = parsed.default, kernels = kernels })
+  end)
+end
+
 -- opts: { transport (required), base_url (required), token?, headers?,
 --         kernel_name?, name?, path? } — name/path label the session
 --         server-side. headers is a table, or a function returning one,
@@ -26,7 +83,7 @@ function M.new(opts)
     base_url = opts.base_url:gsub("/$", ""),
     token = opts.token,
     headers = opts.headers,
-    kernel_name = opts.kernel_name or "python3",
+    kernel_name = opts.kernel_name or M.DEFAULT_KERNEL,
     name = opts.name or "perijove",
     path = opts.path or "perijove.ipynb",
     -- our session id on the wire: ties every message we send together so
@@ -41,18 +98,7 @@ function M.new(opts)
 end
 
 function Client:_headers()
-  local h = {}
-  local extra = self.headers
-  if type(extra) == "function" then
-    extra = extra()
-  end
-  for k, v in pairs(extra or {}) do
-    h[k] = v
-  end
-  if self.token then
-    h["Authorization"] = "token " .. self.token
-  end
-  return h
+  return build_headers(self.token, self.headers)
 end
 
 function Client:_ws_url(path)

@@ -63,6 +63,8 @@ function M.setup(opts)
   end
 
   -- :Perijove                open/toggle the notebook UI (as always)
+  -- :Perijove config         the jupyter config window (connection + kernel
+  --                          dropdowns; global defaults outside a notebook)
   -- :Perijove connections    pick a connection (this notebook, or the
   --                          global default outside one)
   -- :Perijove connect <name> the same, without the picker
@@ -100,6 +102,8 @@ function M.setup(opts)
         return
       end
       apply(name)
+    elseif sub == "config" then
+      notebook_file.open_config(bufnr)
     elseif sub == "new-connection" then
       require("perijove.connections.ui").create()
     else
@@ -116,7 +120,7 @@ function M.setup(opts)
         end
         return names
       end
-      return { "connections", "connect", "new-connection" }
+      return { "config", "connections", "connect", "new-connection" }
     end,
     desc = "perijove: open/toggle the notebook UI, or manage jupyter connections",
   })

@@ -97,6 +97,21 @@ creates one interactively (in-memory; persist it via `setup()` or
 `perijove.json` default > `setup()` default > `local`. Whatever is picked,
 nothing dials until the first run.
 
+### The config window
+
+`<C-j>S` (or `:Perijove config`) opens the **jupyter config window**, a
+floating panel with a dropdown per axis: the **connection** the notebook
+talks to (with the spec's kind/source/default shown beneath) and the
+**kernel** it boots. Dropdowns filter as you type; `<C-n>`/`<C-p>` move the
+selection, `<CR>`/`<C-y>` apply it — a pick switches the live notebook like
+`set_connection`/`set_kernel` (old kernel down now, next run boots the new
+choice). Once the notebook's server has booted, its `/api/kernelspecs`
+listing fills the kernel dropdown; before that the field is free text (type
+any kernelspec name). **+ new connection…** runs the guided creation flow.
+Outside a notebook the window sets the global default connection and has no
+kernel field. Programmatically: `notebook_file.set_kernel(bufnr, name)` /
+`notebook_file.kernel_of(bufnr)`.
+
 ### Notebook LSP
 
 perijove speaks LSP 3.17 **notebookDocument synchronization**, the protocol
@@ -172,7 +187,8 @@ require("perijove.mcp").register_into(my_server)
   down/up · `<C-j>m` retype code<->markdown · `<C-j>c` fold outputs ·
   `<C-j>C` clear outputs.
   Notebook-wide: `<C-j>a` run all, `<C-j>i` interrupt, `<C-j>R` restart
-  kernel, `<C-j>s` switch jupyter connection, `<C-j>x` clear all outputs,
+  kernel, `<C-j>s` switch jupyter connection, `<C-j>S` jupyter config window
+  (connection + kernel dropdowns), `<C-j>x` clear all outputs,
   `<C-j>w` save, `<C-j>t` toggle raw ipynb, `<C-j>p` toggle markdown side
   previews.
 
