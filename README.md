@@ -97,6 +97,80 @@ creates one interactively (in-memory; persist it via `setup()` or
 `perijove.json` default > `setup()` default > `local`. Whatever is picked,
 nothing dials until the first run.
 
+### A custom local jupyter (nix)
+
+The packaged plugin closes over its own python env: `jupyter-server`,
+`ipykernel`, and `matplotlib`, pinned by store path (`lua/perijove/tools.lua`,
+substituted in `flake.nix`). That is enough to boot a kernel and draw a plot,
+and nothing else — the moment a notebook imports numpy or torch, the `local`
+connection needs an env you built.
+
+**`nix shell` does not help here.** The packaged plugin never looks at `$PATH`;
+it runs the store path it was built with. Adding packages to your shell changes
+nothing about which python the kernel gets. You have to point perijove at a
+different env explicitly, which is what the two knobs below do.
+
+Build the env like any other python env — `ipykernel` is what makes it a
+usable kernel, `jupyter-server` is what perijove spawns:
+
+```nix
+notebookEnv = pkgs.python3.withPackages (ps: [
+  ps.jupyter-server
+  ps.ipykernel
+  ps.numpy
+  ps.pandas
+  ps.matplotlib
+]);
+```
+
+Then either give one connection its own server, which leaves the builtin
+`local` alone as a fallback:
+
+```nix
+plugins.perijove.settings.connections = [
+  {
+    name = "ds";
+    kind = "local";
+    cmd = [ "${notebookEnv}/bin/jupyter-server" ];
+    # the server's cwd for relative paths and data files; it defaults to
+    # $TMPDIR, which is rarely what a notebook wants
+    root_dir = "/home/you/work";
+  }
+];
+plugins.perijove.settings.default_connection = "ds";
+```
+
+or replace the default binary globally, so every `local` connection (including
+the builtin one) uses that env:
+
+```nix
+plugins.perijove.settings.tools."jupyter-server" = "${notebookEnv}/bin/jupyter-server";
+```
+
+`cmd` is an argv PREFIX: perijove appends its own `--ServerApp.*` flags (ip,
+free port, generated token, no browser, root_dir), so anything that accepts
+jupyter-server's options works — a wrapper script, `nix run`, a `poetry run`
+line. `tools` takes single binaries, `cmd` takes a whole argv; both beat the
+substituted store path (`tools.lua`: override > store path > PATH).
+
+The kernels the config window offers come from that server's
+`/api/kernelspecs`, so a package is importable in a cell exactly when it is in
+the env whose `ipykernel` registered the kernelspec. Mixing envs (server from
+one, kernel from another) is possible via kernelspecs but is not something
+perijove sets up for you.
+
+The same two knobs work from plain lua when you are not going through nix, with
+whatever absolute path you like:
+
+```lua
+require("perijove").setup({
+  connections = {
+    { name = "ds", kind = "local", cmd = { "/path/to/env/bin/jupyter-server" } },
+  },
+  default_connection = "ds",
+})
+```
+
 ### The config window
 
 `<C-j>S` (or `:Perijove config`) opens the **jupyter config window**, a
