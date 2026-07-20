@@ -705,6 +705,31 @@ local function reload_from_buffer(sess)
   end
 end
 
+-- Ask vim to re-check the notebook file on disk. Under the buffer mount the
+-- FILE buffer is never displayed, and a bare `:checktime` only sweeps
+-- displayed buffers -- so an external write went unnoticed entirely. The
+-- targeted form DOES reach a hidden buffer, and everything downstream of it
+-- is intact: a clean buffer reloads and fires FileChangedShellPost, a dirty
+-- one fires FileChangedShell first so the guard below can veto the reload.
+-- All the mount took away was somebody to make the call.
+local function check_disk(sess)
+  if sess.raw or not vim.api.nvim_buf_is_valid(sess.bufnr) then
+    return
+  end
+  if vim.api.nvim_buf_get_name(sess.bufnr) == "" then
+    return -- in-memory notebook (the demos, tests): no file to have changed
+  end
+  -- deferred on purpose: vim will not reload a buffer while autocommands are
+  -- running, and every caller here IS an autocommand. Called inline, the
+  -- check silently does nothing.
+  vim.schedule(function()
+    if M._sessions[sess.bufnr] ~= sess or not vim.api.nvim_buf_is_valid(sess.bufnr) then
+      return
+    end
+    pcall(vim.cmd, "silent! checktime " .. sess.bufnr)
+  end)
+end
+
 ---------------------------------------------------------------------------
 -- The entry points
 ---------------------------------------------------------------------------
@@ -814,6 +839,17 @@ function M.open(bufnr, opts)
         end
       end,
     }),
+    -- ...and the triggers that drive the check. vim runs its own checktime on
+    -- exactly these events, but only over displayed buffers, so a mounted
+    -- notebook has to ask on its own behalf.
+    vim.api.nvim_create_autocmd({ "FocusGained", "BufEnter", "CursorHold" }, {
+      callback = function()
+        if M._sessions[bufnr] ~= sess then
+          return true -- session gone: drop the hook
+        end
+        check_disk(sess)
+      end,
+    }),
     -- the buffer changed under us (autoread reload, :e/:e!): take it in
     vim.api.nvim_create_autocmd({ "FileChangedShellPost", "BufReadPost" }, {
       buffer = bufnr,
@@ -830,6 +866,16 @@ function M.open(bufnr, opts)
     M.toggle(bufnr)
   end, "toggle notebook view")
   return sess
+end
+
+-- Re-check the notebook file on disk now. `:checktime` cannot see a mounted
+-- notebook's file buffer (it is hidden behind the view), so this is the
+-- equivalent for one.
+function M.checktime(bufnr)
+  local sess = M._sessions[bufnr ~= 0 and bufnr or vim.api.nvim_get_current_buf()]
+  if sess then
+    check_disk(sess)
+  end
 end
 
 -- Write the notebook to its file: sync cell buffers, serialize, refresh the

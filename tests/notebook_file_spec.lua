@@ -778,7 +778,11 @@ describe("notebook_file external changes", function()
     local path, bufnr, sess = open_fixture()
     rewrite_on_disk(path, "external_edit = 1")
 
-    vim.cmd("silent! checktime")
+    -- a bare :checktime only sweeps DISPLAYED buffers, and the mount hides the
+    -- notebook's file buffer; FocusGained is one of the events that makes the
+    -- session run the check on its own behalf (coming back from the terminal
+    -- that did the write is the motivating case)
+    vim.cmd("doautocmd FocusGained")
     vim.wait(2000, function()
       return sess.handle and buf_text(sess.handle.bufnr):find("external_edit = 1", 1, true) ~= nil
     end, 20)
@@ -798,7 +802,7 @@ describe("notebook_file external changes", function()
       warned = msg
     end
     rewrite_on_disk(path, "external_edit = 2")
-    vim.cmd("silent! checktime")
+    vim.cmd("doautocmd FocusGained")
     vim.wait(300, function()
       return false
     end, 50)
