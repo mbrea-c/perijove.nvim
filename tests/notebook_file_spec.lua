@@ -227,7 +227,9 @@ describe("notebook_file lifecycle", function()
     -- a second window, so the notebook's window can actually close
     vim.cmd("botright vnew")
     local other = vim.api.nvim_get_current_win()
-    vim.api.nvim_win_close(vim.fn.bufwinid(bufnr), true)
+    -- the notebook's window is the mount's own now: under the buffer mount it
+    -- shows the VIEW buffer, so the file buffer is not the way to find it
+    vim.api.nvim_win_close(sess.handle.host_winid, true)
     vim.wait(500, function()
       return sess.handle == nil
     end, 10)
@@ -560,6 +562,105 @@ describe("notebook_file multi-window", function()
     assert.is_not_nil(sess.handle)
     assert.equal(second, sess.handle.host_winid)
     assert.is_false(vim.api.nvim_win_is_valid(first_host))
+
+    cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+end)
+
+-- The view renders INTO the notebook's window (a fibrous buffer mount), so
+-- while the UI is up that window shows the view buffer and the file buffer is
+-- displayed nowhere — unless the user opened it somewhere else, which is what
+-- makes "extra windows raw" still mean something.
+describe("notebook_file buffer mount", function()
+  it("takes the window over: the file buffer is displayed nowhere while mounted", function()
+    local _, bufnr, sess = open_fixture()
+    local host = sess.handle.host_winid
+
+    assert.equal(sess.handle.bufnr, vim.api.nvim_win_get_buf(host))
+    assert.equal(-1, vim.fn.bufwinid(bufnr))
+    -- and no covering float: the pane draws the canvas itself
+    assert.equal("", vim.api.nvim_win_get_config(host).relative)
+
+    cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+
+  it("hands the file buffer back to the window on unmount", function()
+    local _, bufnr, sess = open_fixture()
+    local host = sess.handle.host_winid
+    sess.store:set_source(sess.store.cells[2].id, "handed_back = True")
+
+    notebook_file.toggle(bufnr) -- down to raw
+
+    assert.is_nil(sess.handle)
+    assert.is_true(vim.api.nvim_win_is_valid(host))
+    assert.equal(bufnr, vim.api.nvim_win_get_buf(host))
+    -- the JSON handed back is the CURRENT store, not what was read from disk
+    assert.truthy(buf_text(bufnr):find("handed_back = True", 1, true))
+
+    cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+
+  -- The view buffer is bufhidden=wipe (that is what turns an abandoning :q
+  -- into E37). Unmount hides it to put the file buffer back, so the wipe
+  -- fires DURING teardown — the window must survive that, and the session
+  -- must not be left half-torn.
+  it("survives the view buffer wiping itself during teardown", function()
+    local _, bufnr, sess = open_fixture()
+    local host = sess.handle.host_winid
+    local viewbuf = sess.handle.bufnr
+    assert.equal("wipe", vim.bo[viewbuf].bufhidden)
+
+    notebook_file.toggle(bufnr)
+
+    assert.is_false(vim.api.nvim_buf_is_valid(viewbuf))
+    assert.is_true(vim.api.nvim_win_is_valid(host))
+    assert.equal(bufnr, vim.api.nvim_win_get_buf(host))
+
+    cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+
+  -- Splitting the UI window would otherwise put the VIEW buffer in two
+  -- windows, which fibrous refuses to render ("cannot render fibrous buffer
+  -- in two windows at once"). The new window gets the raw JSON instead, which
+  -- is what "extra windows raw" has always meant.
+  it("a split of the UI window shows raw JSON, not the refusal message", function()
+    local _, bufnr, sess = open_fixture()
+    local viewbuf = sess.handle.bufnr
+
+    vim.api.nvim_set_current_win(sess.handle.host_winid)
+    vim.cmd("split")
+    local new_win = vim.api.nvim_get_current_win()
+
+    assert.equal(bufnr, vim.api.nvim_win_get_buf(new_win))
+    assert.truthy(buf_text(bufnr):find('"cells"', 1, true))
+    -- the UI survives untouched in its own window, still rendering
+    assert.is_not_nil(sess.handle)
+    assert.truthy(buf_text(viewbuf):find("NbTitle", 1, true))
+    assert.falsy(buf_text(viewbuf):find("two windows at once", 1, true))
+
+    cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+
+  it("does not open a second UI when the buffer is shown in another window", function()
+    local _, bufnr, sess = open_fixture()
+    local first_handle = sess.handle
+
+    vim.cmd("botright vsplit")
+    vim.cmd("buffer " .. bufnr)
+    local second = vim.api.nvim_get_current_win()
+    vim.wait(200, function()
+      return false
+    end, 10)
+
+    -- P0: one UI per notebook. The second window stays on the raw JSON.
+    assert.rawequal(first_handle, sess.handle)
+    assert.equal(bufnr, vim.api.nvim_win_get_buf(second))
+    assert.equal(sess.handle.bufnr, vim.api.nvim_win_get_buf(sess.handle.host_winid))
 
     cleanup(bufnr)
     vim.cmd("silent! only")

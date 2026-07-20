@@ -277,6 +277,10 @@ local function sync_view_modified(sess)
   vim.bo[handle.bufnr].modified = dirty
 end
 
+-- (defined below, in the serialization section: guard_view_buffer's WinNew
+-- hook hands the raw JSON to a split, and name resolution is lexical)
+local refresh_buffer
+
 -- Make the view buffer carry that guard natively. The fibrous page buffer
 -- is nofile, and nvim force-clears 'modified' on nofile buffers; acwrite
 -- lets the flag stick and routes :w/:wa in the view to the notebook save,
@@ -293,6 +297,29 @@ local function guard_view_buffer(sess)
     buffer = viewbuf,
     callback = function()
       M.save(sess.bufnr)
+    end,
+  })
+  -- Splitting the notebook window would put the VIEW buffer in two windows,
+  -- and one fibrous canvas cannot render into two ("cannot render fibrous
+  -- buffer in two windows at once" is what the mount would draw instead).
+  -- Splitting a notebook is a reasonable thing to want, so the new window
+  -- gets the raw JSON — the same "extra windows raw" rule every other second
+  -- window follows. A WinNew hook rather than <C-w>s/v/S/n keymaps: it also
+  -- catches the paths a buffer-local map cannot (bare :split, window pickers,
+  -- session restore). Synchronous, so it lands before the mount's own
+  -- multi-window check (which is scheduled) ever observes two windows.
+  vim.api.nvim_create_autocmd("WinNew", {
+    callback = function()
+      if M._sessions[sess.bufnr] ~= sess or not sess.handle or sess.handle.bufnr ~= viewbuf then
+        return true -- the session moved on: drop the hook
+      end
+      for _, win in ipairs(vim.fn.win_findbuf(viewbuf)) do
+        if win ~= sess.handle.host_winid then
+          -- hand it honest JSON, not whatever the last serialization left
+          refresh_buffer(sess)
+          pcall(vim.api.nvim_win_set_buf, win, sess.bufnr)
+        end
+      end
     end,
   })
   vim.api.nvim_buf_attach(viewbuf, false, {
@@ -319,38 +346,46 @@ local function guard_view_buffer(sess)
       if M._sessions[sess.bufnr] ~= sess or not vim.bo[viewbuf].modified then
         return
       end
+      -- Under the buffer mount the FILE buffer is hidden, not displayed under
+      -- the view, so a :q! in the notebook window no longer covers it: vim's
+      -- own exit check finds a modified hidden buffer and vetoes with E37
+      -- before any teardown of ours runs. Clear it here and put it back if
+      -- the quit turns out to have been vetoed after all — a plain :q is
+      -- still stopped by the view buffer's own flag, which is untouched.
+      local was_dirty = vim.api.nvim_buf_is_valid(sess.bufnr) and vim.bo[sess.bufnr].modified
+      if was_dirty then
+        vim.bo[sess.bufnr].modified = false
+      end
       vim.schedule(function()
-        if M._sessions[sess.bufnr] == sess and not vim.api.nvim_buf_is_valid(viewbuf) then
+        if M._sessions[sess.bufnr] ~= sess then
+          return
+        end
+        if not vim.api.nvim_buf_is_valid(viewbuf) then
           sess.force_discard = true
+        elseif was_dirty and vim.api.nvim_buf_is_valid(sess.bufnr) then
+          vim.bo[sess.bufnr].modified = true -- vetoed: still unsaved work
         end
       end)
     end,
   })
 end
 
--- When is the buffer worth refreshing eagerly? A rewrite under the mounted
--- floats repaints the whole covered pane (~2.3KB of terminal bytes per
--- event, termdraw-measured), so while the mount's pane is the only window
--- the buffer stays lazy: save/toggle/hide serialize fresh, and the modified
--- flag is honest throughout. Someone LOOKING at the raw JSON (a second
--- window, a preview float) gets it eagerly; a hidden notebook keeps its
--- buffer honest for grep and friends; a raw toggle owns the text, hands off.
+-- When is the buffer worth refreshing eagerly? Whenever it is displayed at
+-- all. Under the buffer mount the notebook's window shows the VIEW buffer, so
+-- the file buffer is never underneath the canvas — the old exclusion of the
+-- mount's own window (which existed because rewriting under the floats
+-- repainted the whole covered pane, ~2.3KB of terminal bytes per event,
+-- termdraw-measured) has nothing left to exclude. A hidden notebook still
+-- refreshes so grep and friends see honest JSON; a raw toggle owns the text
+-- and is handed off to.
 local function buffer_refresh_due(sess)
   if sess.raw then
     return false
   end
-  if not sess.handle then
-    return true
-  end
-  for _, win in ipairs(vim.fn.win_findbuf(sess.bufnr)) do
-    if win ~= sess.handle.host_winid then
-      return true
-    end
-  end
-  return false
+  return not sess.handle or #vim.fn.win_findbuf(sess.bufnr) > 0
 end
 
-local function refresh_buffer(sess)
+function refresh_buffer(sess)
   if not vim.api.nvim_buf_is_valid(sess.bufnr) or not buffer_refresh_due(sess) then
     return
   end
@@ -400,6 +435,22 @@ local function drop_ui(sess)
   end
   sess.unmounting = true
   sess.handle = nil
+  -- Retire the acwrite guard before the mount tears down. Under the buffer
+  -- mount, teardown hands the FILE buffer back to the window with
+  -- nvim_win_set_buf, and that refuses to abandon a modified buffer (E37);
+  -- fibrous swallows the error, the window keeps the view buffer, and the
+  -- host's own forced buffer delete then takes the window down with it.
+  -- Clearing 'modified' here is not enough on its own — destroying the
+  -- subwindows repaints the canvas on the way out, and a repaint sets
+  -- 'modified' as a side effect of nvim_buf_set_lines. Going back to nofile
+  -- (fibrous's own default) is what makes it stick: nvim force-clears the
+  -- flag on nofile buffers, so the repaints cannot re-dirty it. The guard has
+  -- nothing left to protect anyway — every deliberate drop has already moved
+  -- the real dirtiness onto the file buffer.
+  if vim.api.nvim_buf_is_valid(handle.bufnr) then
+    vim.bo[handle.bufnr].buftype = "nofile"
+    vim.bo[handle.bufnr].modified = false
+  end
   handle.unmount()
   sess.unmounting = false
 end
@@ -443,7 +494,7 @@ local function mount(sess, cells, winid)
   local host_winid = winid or vim.api.nvim_get_current_win()
   sess.actions = { current = {} }
   sess.raw = false
-  sess.handle = nr.mount_window(notebook.Notebook, {
+  sess.handle = nr.mount_buffer(notebook.Notebook, {
     store = sess.store,
     actions = sess.actions,
     on_cell_write = function()
