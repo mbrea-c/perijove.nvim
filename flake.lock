@@ -5,11 +5,11 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1784504409,
-        "narHash": "sha256-zI1BBXIQCCuBurfBYH86PFX3czmhwQm48X2DXPLZHCA=",
+        "lastModified": 1784569987,
+        "narHash": "sha256-sCzvbracf909+cD7TnDEGOvG/l4iVGjxYwXBRRcFgbE=",
         "owner": "mbrea-c",
         "repo": "fibrous.nvim",
-        "rev": "68ba0674ac559c8321947df00122f59ee774da8b",
+        "rev": "98a43bb1c5b7c96f644655795a80bf7d630f9bbd",
         "type": "github"
       },
       "original": {
