@@ -220,12 +220,6 @@ local function chord(buf, key, fn, desc)
   vim.keymap.set("n", notebook.PREFIX .. key, fn, { buffer = buf, desc = "perijove: " .. desc })
 end
 
--- :q's endgame when the notebook window is the last one standing (a seam:
--- the test suite must observe the quit, not perform it).
-function M._quit()
-  vim.cmd("quit")
-end
-
 ---------------------------------------------------------------------------
 -- Store -> buffer serialization
 ---------------------------------------------------------------------------
@@ -277,9 +271,10 @@ local function sync_view_modified(sess)
   vim.bo[handle.bufnr].modified = dirty
 end
 
--- (defined below, in the serialization section: guard_view_buffer's WinNew
--- hook hands the raw JSON to a split, and name resolution is lexical)
+-- (both defined below: guard_view_buffer's hooks reach forward to them, and
+-- name resolution is lexical)
 local refresh_buffer
+local drop_ui
 
 -- Make the view buffer carry that guard natively. The fibrous page buffer
 -- is nofile, and nvim force-clears 'modified' on nofile buffers; acwrite
@@ -308,6 +303,54 @@ local function guard_view_buffer(sess)
   -- catches the paths a buffer-local map cannot (bare :split, window pickers,
   -- session restore). Synchronous, so it lands before the mount's own
   -- multi-window check (which is scheduled) ever observes two windows.
+  -- The view buffer is bufhidden=wipe, so navigating the notebook's window
+  -- somewhere else (:e, :b, :bnext) wipes it without the window ever closing
+  -- — and the mount's own teardown hangs off WinClosed, so nothing fires and
+  -- the session is left holding a handle to a dead buffer. Treat it as the
+  -- hide it plainly is: drop the UI, keep the session (store, outputs,
+  -- kernel), and let BufWinEnter remount when the notebook is shown again.
+  -- Deferred, because a wipe is no place to unmount from.
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    buffer = viewbuf,
+    callback = function()
+      if sess.unmounting or M._sessions[sess.bufnr] ~= sess then
+        return
+      end
+      if not sess.handle or sess.handle.bufnr ~= viewbuf then
+        return
+      end
+      -- What the user navigated TO. The mount's teardown puts the embedder's
+      -- buffer back into its window unconditionally, which here means the
+      -- notebook file lands back on top of the buffer just opened — and that
+      -- BufWinEnter would remount the UI the user was walking away from. So
+      -- remember the destination and give the window back afterwards.
+      local host_winid = sess.handle.host_winid
+      local moved_to = vim.api.nvim_win_is_valid(host_winid) and vim.api.nvim_win_get_buf(host_winid) or nil
+      -- and the restore fires BufWinEnter, whose remount would put the UI
+      -- straight back. Suppress it for the length of the teardown.
+      sess.navigating_away = true
+      vim.schedule(function()
+        if M._sessions[sess.bufnr] ~= sess or not sess.handle or sess.handle.bufnr ~= viewbuf then
+          sess.navigating_away = nil
+          return
+        end
+        drop_ui(sess)
+        if
+          moved_to
+          and moved_to ~= viewbuf
+          and vim.api.nvim_buf_is_valid(moved_to)
+          and vim.api.nvim_win_is_valid(host_winid)
+          and vim.api.nvim_win_get_buf(host_winid) ~= moved_to
+        then
+          pcall(vim.api.nvim_win_set_buf, host_winid, moved_to)
+        end
+        -- one more tick: past the BufWinEnter the restore above provoked
+        vim.schedule(function()
+          sess.navigating_away = nil
+        end)
+      end)
+    end,
+  })
   vim.api.nvim_create_autocmd("WinNew", {
     callback = function()
       if M._sessions[sess.bufnr] ~= sess or not sess.handle or sess.handle.bufnr ~= viewbuf then
@@ -428,7 +471,7 @@ local remount
 
 -- Unmount the view because perijove says so (toggle, close, remount): the
 -- flag keeps the mount's on_unmount from treating it as a user-driven :q.
-local function drop_ui(sess)
+function drop_ui(sess)
   local handle = sess.handle
   if not handle then
     return
@@ -547,27 +590,14 @@ local function mount(sess, cells, winid)
         sess.force_discard = nil
         vim.bo[sess.bufnr].modified = false
       end
-      -- closing either closes the other: the mount's OWN window goes with
-      -- the UI. The very last layout window is vim's to keep, and leaving
-      -- it showing raw JSON is not what :q on a notebook means — there :q
-      -- does what :q on any file does: quit vim. Plain :quit, so an unsaved
-      -- buffer ELSEWHERE still vetoes with its usual error; the notebook's
-      -- own dirtiness was either already saved (:q refuses otherwise) or
-      -- explicitly discarded by the bang above.
-      if vim.api.nvim_win_is_valid(host_winid) then
-        pcall(vim.api.nvim_win_close, host_winid, false)
-        if vim.api.nvim_win_is_valid(host_winid) then
-          vim.schedule(function()
-            if M._sessions[sess.bufnr] ~= sess or sess.handle or not vim.api.nvim_win_is_valid(host_winid) then
-              return
-            end
-            -- re-attempt: the layout may have changed since the tick began
-            if not pcall(vim.api.nvim_win_close, host_winid, false) then
-              pcall(M._quit)
-            end
-          end)
-        end
-      end
+      -- No window to chase any more. Under the buffer mount the notebook IS
+      -- the window's buffer, so :q on it is :q on a file: vim closes the
+      -- window, and in the last one vim quits — with its own veto on an
+      -- unsaved buffer elsewhere, and its own bang. The float mount needed a
+      -- pane to close behind the float and a last-window quit arranged by
+      -- hand; both are vim's job now, and by the time this runs the window
+      -- is already gone.
+      --
       -- the view follows the buffer: if some OTHER window still shows it,
       -- the UI belongs there ("the window the ipynb buffer is open in");
       -- deferred, teardown is no place to open windows
@@ -747,7 +777,7 @@ function M.open(bufnr, opts)
       buffer = bufnr,
       callback = function()
         vim.schedule(function()
-          if M._sessions[bufnr] ~= sess or sess.handle or sess.raw then
+          if M._sessions[bufnr] ~= sess or sess.handle or sess.raw or sess.navigating_away then
             return
           end
           local win = layout_win_of(bufnr)

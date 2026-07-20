@@ -338,23 +338,24 @@ describe("notebook_file quit protection", function()
     assert.is_not_nil(sess.handle) -- still mounted, nothing torn down
 
     -- the bang discards: view goes, session survives, and the bang covers
-    -- the FILE buffer too — in the last layout window the quit must land on
-    -- the first :q!, not stall on our own modified flag for a second one
-    local quits = 0
-    local orig_quit = notebook_file._quit
-    notebook_file._quit = function()
-      quits = quits + 1
-    end
+    -- the FILE buffer too. That matters more under the buffer mount: the file
+    -- buffer is hidden rather than displayed under the view, so a leftover
+    -- 'modified' on it would veto the quit through vim's exit check.
+    -- A second window, so this is a window close rather than a real exit.
+    vim.cmd("botright vnew")
+    local scratch = vim.api.nvim_get_current_buf()
+    vim.api.nvim_set_current_win(sess.handle.host_winid)
+    local host = sess.handle.host_winid
     vim.cmd("quit!")
     vim.wait(500, function()
-      return quits > 0
+      return sess.handle == nil
     end, 10)
-    notebook_file._quit = orig_quit
 
+    assert.is_false(vim.api.nvim_win_is_valid(host))
     assert.is_nil(sess.handle)
     assert.rawequal(sess, notebook_file.session_of(bufnr))
-    assert.equal(1, quits)
     assert.is_false(vim.bo[bufnr].modified)
+    vim.cmd("silent! bwipeout! " .. scratch)
 
     cleanup(bufnr)
     vim.cmd("silent! only")
@@ -391,28 +392,40 @@ describe("notebook_file quit protection", function()
     vim.cmd("silent! only")
   end)
 
-  it(":q in the last window quits vim instead of stranding the raw JSON", function()
+  -- :q on a notebook is :q on a file. Under the buffer mount the notebook IS
+  -- the window's buffer, so vim closes the window itself and quits in the last
+  -- one — no seam to stub, nothing for perijove to arrange. The last-window
+  -- case can't be exercised here (a real quit would take the run with it), so
+  -- what is pinned is the step below it: :q closes the window like any other,
+  -- and vim's own veto still applies to unsaved work.
+  it(":q closes the notebook window itself, like :q on a file", function()
     vim.cmd("silent! only")
+    vim.cmd("botright vnew")
+    local scratch = vim.api.nvim_get_current_buf()
+    vim.cmd("wincmd p")
     local _, bufnr, sess = open_fixture()
+    local host = sess.handle.host_winid
 
-    -- seam: really quitting would take the test run with it
-    local quits = 0
-    local orig_quit = notebook_file._quit
-    notebook_file._quit = function()
-      quits = quits + 1
-    end
-
-    vim.api.nvim_set_current_win(sess.handle.winid)
+    vim.api.nvim_set_current_win(host)
     vim.cmd("quit")
+    -- the window goes at once; the teardown behind it is scheduled
     vim.wait(500, function()
-      return quits > 0
+      return sess.handle == nil
     end, 10)
-    notebook_file._quit = orig_quit
 
-    assert.equal(1, quits)
-    -- had vim stayed (an unsaved buffer vetoed), the session is still whole
+    -- vim closed the window; perijove closed nothing and quit nothing
+    assert.is_false(vim.api.nvim_win_is_valid(host))
+    assert.is_nil(sess.handle)
+    -- hidden, not dead: the session survives for a later remount
     assert.rawequal(sess, notebook_file.session_of(bufnr))
+
     cleanup(bufnr)
+    vim.cmd("silent! bwipeout! " .. scratch)
+    vim.cmd("silent! only")
+  end)
+
+  it("the _quit seam is gone: vim owns quitting now", function()
+    assert.is_nil(notebook_file._quit)
   end)
 
   it("typing in a cell buffer marks the view modified, so :q guards the edit", function()
@@ -461,7 +474,8 @@ describe("notebook_file quit protection", function()
     sess.store:set_source(sess.store.cells[2].id, "dirty_again = True")
     vim.cmd("botright vnew")
     local other = vim.api.nvim_get_current_win()
-    vim.api.nvim_win_close(vim.fn.bufwinid(bufnr), true)
+    -- the notebook's window shows the VIEW buffer now, so ask the handle
+    vim.api.nvim_win_close(sess.handle.host_winid, true)
     vim.wait(500, function()
       return sess.handle == nil
     end, 10)
@@ -504,7 +518,7 @@ describe("notebook_file buffer freshness", function()
 
     vim.cmd("botright vnew")
     local other = vim.api.nvim_get_current_win()
-    vim.api.nvim_win_close(vim.fn.bufwinid(bufnr), true)
+    vim.api.nvim_win_close(sess.handle.host_winid, true)
     vim.wait(500, function()
       return sess.handle == nil
     end, 10)
@@ -641,6 +655,62 @@ describe("notebook_file buffer mount", function()
     assert.is_not_nil(sess.handle)
     assert.truthy(buf_text(viewbuf):find("NbTitle", 1, true))
     assert.falsy(buf_text(viewbuf):find("two windows at once", 1, true))
+
+    cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+
+  -- :q with the cursor in a cell float must close the FLOAT, not the notebook
+  -- and certainly not vim. The float is a window like any other to vim, so
+  -- this is really a guard against the notebook window's :q semantics leaking
+  -- into the subwindows that sit on top of it.
+  it(":q in a cell float closes the float, leaving the notebook mounted", function()
+    vim.cmd("silent! only")
+    local _, bufnr, sess = open_fixture()
+    local host = sess.handle.host_winid
+    local viewbuf = sess.handle.bufnr
+
+    local cellwin
+    for _, w in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_config(w).relative ~= "" then
+        cellwin = cellwin or w
+      end
+    end
+    assert.is_not_nil(cellwin)
+
+    vim.api.nvim_set_current_win(cellwin)
+    vim.cmd("quit")
+    vim.wait(300, function()
+      return not vim.api.nvim_win_is_valid(cellwin)
+    end, 10)
+
+    assert.is_false(vim.api.nvim_win_is_valid(cellwin))
+    assert.is_not_nil(sess.handle) -- the notebook is untouched
+    assert.is_true(vim.api.nvim_win_is_valid(host))
+    assert.equal(viewbuf, vim.api.nvim_win_get_buf(host))
+
+    cleanup(bufnr)
+    vim.cmd("silent! only")
+  end)
+
+  -- bufhidden=wipe means navigating away kills the view buffer without the
+  -- window ever closing, so the mount's WinClosed teardown never fires. Left
+  -- alone that strands the session on a handle to a dead buffer.
+  it("navigating the notebook window away hides the UI rather than stranding it", function()
+    vim.cmd("silent! only")
+    local _, bufnr, sess = open_fixture()
+    local host = sess.handle.host_winid
+    local viewbuf = sess.handle.bufnr
+
+    vim.api.nvim_set_current_win(host)
+    vim.cmd("enew")
+    vim.wait(500, function()
+      return sess.handle == nil
+    end, 10)
+
+    assert.is_false(vim.api.nvim_buf_is_valid(viewbuf))
+    assert.is_nil(sess.handle) -- hidden, not stranded
+    assert.rawequal(sess, notebook_file.session_of(bufnr))
 
     cleanup(bufnr)
     vim.cmd("silent! only")
