@@ -33,6 +33,7 @@ function M.new(client)
     -- bumped by DOCUMENT mutations only (cells, sources, outputs) — not by
     -- kernel status — so save/dirty tracking keys off it
     content_rev = 0,
+    order_rev = 0, -- existing ordinal positions changed (insert, delete, move)
     client = client,
     _next_id = 0,
     _queue = {}, -- cell ids waiting; head runs only after the current settles
@@ -88,6 +89,9 @@ function Store:insert_cell(pos, spec)
     -- save path; nil for cells born in the editor
     meta = spec.meta,
   }
+  if pos <= #self.cells then
+    self.order_rev = self.order_rev + 1
+  end
   table.insert(self.cells, pos, cell)
   self:_notify()
   return cell.id
@@ -145,6 +149,7 @@ function Store:delete_cell(id)
   if i then
     self:_unqueue(id)
     table.remove(self.cells, i)
+    self.order_rev = self.order_rev + 1
     self:_notify()
   end
 end
@@ -159,6 +164,7 @@ function Store:move_cell(id, delta)
   if j ~= i then
     table.remove(self.cells, i)
     table.insert(self.cells, j, cell)
+    self.order_rev = self.order_rev + 1
     self:_notify()
   end
 end

@@ -55,12 +55,98 @@ local function press_at(handle, needle, key)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, false, true), "xt", false)
 end
 
+local function scroll_to(handle, motion, needle)
+  vim.api.nvim_set_current_win(handle.winid)
+  vim.cmd("normal! " .. motion)
+  vim.api.nvim_exec_autocmds("WinScrolled", { pattern = tostring(handle.winid) })
+  assert.is_true(vim.wait(1000, function()
+    return text_of(handle.bufnr):find(needle, 1, true) ~= nil
+  end))
+end
+
 local function new_pair()
   local client = fake_client.new()
   return store.new(client), client
 end
 
 describe("view.notebook", function()
+  it("mounts a bounded range, retains edits, and reveals distant cells", function()
+    local st, client = new_pair()
+    local ids, buffers = {}, {}
+    for i = 1, 150 do
+      ids[i] = st:insert_cell(i, { type = "code", source = "value_" .. i .. " = 1" })
+    end
+    local actions = { current = {} }
+    local h = mount.floating(notebook.Notebook, {
+      store = st,
+      actions = actions,
+      on_cell_buf = function(cell, buf)
+        buffers[cell.id] = buf
+      end,
+    }, { width = 60, height = 24, mode = "scroll", keys = notebook.KEYS })
+    vim.api.nvim_set_current_win(h.winid)
+    assert.is_true(vim.tbl_count(buffers) < 40)
+    assert.is_nil(buffers[ids[150]])
+    vim.api.nvim_buf_set_lines(buffers[ids[1]], 0, -1, false, { "my unsaved edit" })
+    scroll_to(h, "G", "value_150 = 1")
+    assert.is_nil(text_of(h.bufnr):find("value_1 = 1", 1, true))
+    assert.is_true(vim.tbl_count(buffers) < 70)
+    st:run_cell(ids[1])
+    client:last().handlers.on_stream("stdout", "offscreen result")
+    st:set_source(ids[2], "changed by the store")
+    actions.current.sync_to_store()
+    assert.equal("my unsaved edit", st:cell(ids[1]).source)
+    assert.equal("changed by the store", st:cell(ids[2]).source)
+    scroll_to(h, "gg", "offscreen result")
+    assert.truthy(text_of(h.bufnr):find("my unsaved edit", 1, true))
+    assert.same({ "changed by the store" }, vim.api.nvim_buf_get_lines(buffers[ids[2]], 0, -1, false))
+    h.unmount()
+  end)
+
+  it("keeps the cursor on its cell across offscreen inserts, deletes and long moves", function()
+    local st = new_pair()
+    local ids = {}
+    for i = 1, 100 do
+      ids[i] = st:insert_cell(i, { type = "code", source = "keep_" .. i .. "()" })
+    end
+    local h = mount_nb(st)
+    local name = "keep_99()"
+    scroll_to(h, "G", name)
+    local row, col = locate(h.bufnr, name)
+    vim.api.nvim_win_set_cursor(h.winid, { row, col })
+    vim.api.nvim_exec_autocmds("CursorMoved", { buffer = h.bufnr })
+    local function anchored()
+      assert.truthy(vim.api.nvim_get_current_line():find(name, 1, true))
+    end
+    st:insert_cell(1, { type = "markdown", source = "# inserted" })
+    anchored()
+    st:delete_cell(ids[1])
+    anchored()
+    st:move_cell(ids[99], -90)
+    anchored()
+    h.unmount()
+  end)
+
+  it("run-and-advance materializes a destination beyond the overscan", function()
+    local st, client = new_pair()
+    st:insert_cell(1, { type = "code", source = "first_code()" })
+    for i = 2, 160 do
+      st:insert_cell(i, { type = "markdown", source = "paragraph " .. i })
+    end
+    st:insert_cell(161, { type = "code", source = "distant_code()" })
+    local h = mount_nb(st)
+    assert.is_nil(text_of(h.bufnr):find("distant_code()", 1, true))
+    press_at(h, "first_code()", notebook.PREFIX .. "<CR>")
+    assert.is_true(vim.wait(1000, function()
+      return vim.api.nvim_get_current_line():find("In [", 1, true) ~= nil
+        and text_of(h.bufnr):find("distant_code()", 1, true) ~= nil
+    end))
+    client:last().handlers.on_done({ status = "ok", execution_count = 1 })
+    vim.api.nvim_feedkeys(vim.keycode(notebook.PREFIX .. "r"), "xt", false)
+    assert.equal("distant_code()", client:last().code)
+    h.unmount()
+  end)
+
   it("renders kernel status, markdown cells, and code cell mirrors", function()
     local st = new_pair()
     st:insert_cell(1, { type = "markdown", source = "# Big Title" })
@@ -404,6 +490,29 @@ describe("view.notebook", function()
     handle.unmount()
   end)
 
+  it("commits a markdown edit when its cell remounts before the focus change settles", function()
+    local st = new_pair()
+    local id = st:insert_cell(1, { type = "markdown", source = "# Original" })
+    for i = 2, 100 do
+      st:insert_cell(i, { type = "code", source = "value_" .. i })
+    end
+    local h = mount_nb(st)
+    press_at(h, "Original", "<CR>")
+    vim.wait(50)
+    local editor = vim.api.nvim_get_current_buf()
+    assert.equal("markdown", vim.bo[editor].filetype)
+    vim.api.nvim_buf_set_lines(editor, 0, -1, false, { "# Revised" })
+    vim.api.nvim_set_current_win(h.winid)
+    vim.cmd("normal! gg")
+    st:move_cell(id, 99)
+    st:move_cell(id, -99)
+    assert.is_true(vim.wait(1000, function()
+      return st:cell(id).source == "# Revised"
+    end))
+    assert.truthy(text_of(h.bufnr):find("Revised", 1, true))
+    h.unmount()
+  end)
+
   it("prefix-p drops and restores the side preview, live from the editor", function()
     local st = new_pair()
     st:insert_cell(1, { type = "markdown", source = "**BoldWord** tail" })
@@ -590,6 +699,44 @@ describe("view.notebook", function()
     vim.wait(50) -- the input widget's teardown restores its box on the loop
     assert.falsy(text_of(handle.bufnr):find("YourName:", 1, true))
     handle.unmount()
+  end)
+
+  it("retains a partially typed kernel reply when its cell scrolls offscreen", function()
+    local st, client = new_pair()
+    local id = st:insert_cell(1, { type = "code", source = "input()" })
+    for i = 2, 100 do
+      st:insert_cell(i, { type = "code", source = "value_" .. i })
+    end
+    local h = mount_nb(st)
+    st:run_cell(id)
+    local answered
+    client:last().handlers.on_input("YourName:", false, function(value)
+      answered = value
+    end)
+    local function enter_input()
+      local target = require("fibrous.targets").targets({
+        winid = h.winid,
+        predicate = function(t)
+          return t.kind == "text_input"
+        end,
+      })[1]
+      assert.truthy(target)
+      vim.api.nvim_set_current_win(h.winid)
+      vim.api.nvim_win_set_cursor(h.winid, target.pos)
+      vim.api.nvim_exec_autocmds("CursorMoved", { buffer = h.bufnr })
+      vim.api.nvim_feedkeys(vim.keycode("<CR>"), "xt", false)
+      assert.truthy(vim.api.nvim_get_current_buf() ~= h.bufnr)
+      return vim.api.nvim_get_current_buf()
+    end
+    local field = enter_input()
+    vim.api.nvim_buf_set_lines(field, 0, -1, false, { "alice" })
+    vim.wait(20)
+    scroll_to(h, "G", "value_100")
+    scroll_to(h, "gg", "YourName:")
+    assert.same({ "alice" }, vim.api.nvim_buf_get_lines(enter_input(), 0, -1, false))
+    vim.api.nvim_feedkeys(vim.keycode("<CR>"), "xt", false)
+    assert.equal("alice", answered)
+    h.unmount()
   end)
 
   it("shows how long the kernel has been busy", function()

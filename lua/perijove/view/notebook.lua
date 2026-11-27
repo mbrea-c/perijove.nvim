@@ -12,12 +12,12 @@
 --   - the buffer is authoritative at RUN time: run syncs buffer -> store
 --     before queueing, so you always execute what you see.
 --
--- No memoization yet: every store notify re-renders the whole column. Fine
--- for the demo scale; per-cell `memo = true` (the weave transcript pattern)
--- is the planned fix when notebooks grow.
+-- Only the viewport and its overscan mount cell components. Their editor
+-- buffers belong to the notebook and survive scrolling out of the range.
 
 local ui = require("fibrous").ui
 local targets = require("fibrous.targets")
+local Viewport = require("perijove.view.viewport")
 
 local M = {}
 
@@ -122,6 +122,17 @@ end
 
 local function buf_text(buf)
   return table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n")
+end
+
+local function sync_buffer(store, slot, cell, buf)
+  -- A store edit to an offscreen cell has not reached its buffer yet.
+  if cell and slot.synced[cell.id] == cell.source and vim.api.nvim_buf_is_valid(buf) then
+    local text = buf_text(buf)
+    if text ~= cell.source then
+      slot.synced[cell.id] = text
+      store:set_source(cell.id, text)
+    end
+  end
 end
 
 ---------------------------------------------------------------------------
@@ -231,45 +242,46 @@ local function anchor_role(id)
 end
 
 -- Land the cursor on cell `id`'s header anchor in `win` (the mount's root
--- window). Targets are viewport-filtered, but the root buffer already holds
--- the whole painted document, so paging topline through it finds any cell —
--- no repaint needed.
-local function jump_to_cell(win, id)
-  local role = anchor_role(id)
-  local function find()
+-- window). Reveal an offscreen cell by its current document index.
+local function finish_jump(viewport)
+  local id, win = viewport.pending_jump, viewport.win
+  if not id or not win then
+    return
+  end
+  local function header()
     return targets.targets({
       winid = win,
       predicate = function(t)
-        return t.role == role
+        return t.role == anchor_role(id)
       end,
     })[1]
   end
-  local t = find()
-  if not t then
-    vim.api.nvim_win_call(win, function()
-      local h = vim.api.nvim_win_get_height(win)
-      local last = vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win))
-      local top = 1
-      while top <= last and not t do
-        vim.fn.winrestview({ topline = top })
-        t = find()
-        top = top + h
-      end
-    end)
+  local target = header()
+  if not target then
+    local index = viewport.store:index(id)
+    if not index then
+      viewport.pending_jump = nil
+      return
+    end
+    viewport:reveal(index + 1)
+    target = header()
   end
-  if t then
+  if target then
+    viewport.pending_jump = nil
     vim.api.nvim_set_current_win(win)
-    vim.api.nvim_win_set_cursor(win, { t.pos[1], t.pos[2] })
-    -- API cursor moves fire no autocmds, but fibrous's interaction layer
-    -- anchors the cursor to the element under it ON CursorMoved — without
-    -- this, the next flush's reanchor snaps the cursor back to the old cell
+    vim.api.nvim_win_set_cursor(win, { target.pos[1], target.pos[2] })
     vim.api.nvim_exec_autocmds("CursorMoved", { buffer = vim.api.nvim_win_get_buf(win) })
   end
 end
 
+local function jump_to_cell(viewport, id)
+  viewport.pending_jump = id
+  finish_jump(viewport)
+end
+
 -- Advance from `cell`: land on the next code cell, appending a fresh one
 -- right below when there is none (the Jupyter run-and-advance staple).
-local function advance(store, cell)
+local function advance(store, cell, viewport)
   local i = store:index(cell.id)
   if not i then
     return
@@ -282,7 +294,7 @@ local function advance(store, cell)
     end
   end
   next_id = next_id or store:insert_cell(i + 1, { type = "code", source = "" })
-  jump_to_cell(vim.api.nvim_get_current_win(), next_id)
+  jump_to_cell(viewport, next_id)
 end
 
 ---------------------------------------------------------------------------
@@ -292,10 +304,10 @@ end
 -- The management chords shared by every cell, keyed for on_key routing.
 -- `sync` (code cells) pulls the cell buffer into the store first, so a
 -- retype never drops text typed since the last run.
-local function cell_ops(store, cell, sync)
+local function cell_ops(store, cell, viewport, sync)
   local function insert_at(pos)
     local id = store:insert_cell(pos, { type = "code", source = "" })
-    jump_to_cell(vim.api.nvim_get_current_win(), id)
+    jump_to_cell(viewport, id)
   end
   return {
     [M.PREFIX .. "o"] = function()
@@ -342,11 +354,11 @@ local function CodeCell(_, props)
     sync()
     store:run_cell(cell.id)
   end
-  local keys = cell_ops(store, cell, sync)
+  local keys = cell_ops(store, cell, slot.viewport, sync)
   keys[M.PREFIX .. "r"] = run
   keys[M.PREFIX .. "<CR>"] = function()
     run()
-    advance(store, cell)
+    advance(store, cell, slot.viewport)
   end
   keys[M.PREFIX .. "c"] = function()
     store:toggle_output(cell.id)
@@ -420,10 +432,15 @@ local function CodeCell(_, props)
           props = {
             width = 30,
             clear_on_submit = true,
+            value = slot.input_drafts[pending],
+            on_change = function(value)
+              slot.input_drafts[pending] = value
+            end,
             -- an empty input mirrors as nothing: the border IS the field's
             -- visible (and hoverable) presence on the page
             style = { border = "rounded" },
             on_submit = function(value)
+              slot.input_drafts[pending] = nil
               store:answer_input(value)
             end,
           },
@@ -493,9 +510,9 @@ local function MarkdownCell(ctx, props)
   local editing = ctx.use_state(false)
   local live = ctx.use_state({}) -- { text? }: the preview while typing
 
-  local keys = cell_ops(store, cell, nil)
+  local keys = cell_ops(store, cell, slot.viewport)
   keys[M.PREFIX .. "<CR>"] = function()
-    advance(store, cell)
+    advance(store, cell, slot.viewport)
   end
 
   local function enter_editing(rendered_line)
@@ -519,24 +536,27 @@ local function MarkdownCell(ctx, props)
     end)
   end
 
-  local function leave_editing()
-    local buf = slot.bufs[cell.id]
-    if buf and vim.api.nvim_buf_is_valid(buf) then
-      -- the buffer wins on the way out, exactly like a code cell at run
-      local text = buf_text(buf)
-      slot.synced[cell.id] = text
-      store:set_source(cell.id, text)
+  -- The editor buffer can outlive this component. Its autocmds reach the
+  -- preview and split only while this editing session is mounted.
+  ctx.use_effect(function()
+    if not editing.get() then
+      return
     end
-    editing.set(false)
-  end
-
-  -- Published per render so the once-created WinLeave autocmd always calls
-  -- the live closures — the playground's `entry.reload` pattern.
-  slot.md_leave[cell.id] = function()
-    if editing.get() then
-      leave_editing()
+    local session = {
+      change = function()
+        live.set({ text = buf_text(slot.bufs[cell.id]) })
+      end,
+      leave = function()
+        editing.set(false)
+      end,
+    }
+    slot.md_edit[cell.id] = session
+    return function()
+      if slot.md_edit[cell.id] == session then
+        slot.md_edit[cell.id] = nil
+      end
     end
-  end
+  end, { editing.get() })
 
   if not editing.get() then
     -- borderless — markdown reads as prose on the page, no box chrome; but
@@ -574,9 +594,9 @@ local function MarkdownCell(ctx, props)
     vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
       buffer = buf,
       callback = function()
-        local fn = slot.live[cell.id]
-        if fn then
-          fn()
+        local session = slot.md_edit[cell.id]
+        if session then
+          session.change()
         end
       end,
     })
@@ -588,9 +608,12 @@ local function MarkdownCell(ctx, props)
       callback = function()
         vim.schedule(function()
           if vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_get_current_buf() ~= buf then
-            local fn = slot.md_leave[cell.id]
-            if fn then
-              fn()
+            if cell.type == "markdown" then
+              sync_buffer(store, slot, store:cell(cell.id), buf)
+            end
+            local session = slot.md_edit[cell.id]
+            if session then
+              session.leave()
             end
           end
         end)
@@ -603,10 +626,6 @@ local function MarkdownCell(ctx, props)
       end
     end, { buffer = buf, desc = "perijove: toggle markdown side previews" })
   end
-  slot.live[cell.id] = function()
-    live.set({ text = buf_text(buf) })
-  end
-
   -- one row either way, so the editor keeps its fiber (and float) across a
   -- preview toggle; the preview pane is simply present or not
   local panes = {
@@ -654,7 +673,15 @@ function M.Notebook(ctx, props)
   -- per-cell buffers live as long as the view; deleted with it
   local slot = ctx.use_ref(nil)
   if not slot.current then
-    slot.current = { bufs = {}, synced = {}, mapped = {}, md_mapped = {}, md_leave = {}, live = {} }
+    slot.current = {
+      viewport = Viewport.new(store),
+      bufs = {},
+      synced = {},
+      mapped = {},
+      md_mapped = {},
+      md_edit = {},
+      input_drafts = setmetatable({}, { __mode = "k" }), -- scoped to the kernel request
+    }
   end
 
   -- The markdown-preview flag lives on the module (perijove-global); flipping
@@ -668,6 +695,7 @@ function M.Notebook(ctx, props)
   end
   ctx.use_effect(function()
     return function()
+      slot.current.viewport:close()
       for _, buf in pairs(slot.current.bufs) do
         pcall(vim.api.nvim_buf_delete, buf, { force = true })
       end
@@ -684,13 +712,7 @@ function M.Notebook(ctx, props)
       props.actions.current = {
         sync_to_store = function()
           for id, buf in pairs(slot.current.bufs) do
-            if vim.api.nvim_buf_is_valid(buf) and store:cell(id) then
-              local text = buf_text(buf)
-              if text ~= store:cell(id).source then
-                store:set_source(id, text)
-              end
-              slot.current.synced[id] = store:cell(id).source
-            end
+            sync_buffer(store, slot.current, store:cell(id), buf)
           end
         end,
         each_cell_buf = function(fn)
@@ -736,13 +758,21 @@ function M.Notebook(ctx, props)
       status = ("%s · %ds"):format(status, secs)
     end
   end
-  local children = {
-    {
-      comp = ui.text,
-      props = { text = status, style = { text_hl = "Comment" } },
-    },
-  }
-  for _, cell in ipairs(store.cells) do
+  local viewport = slot.current.viewport
+  local first, last = viewport:cells(ctx)
+  -- Key handlers batch updates. Resolve a jump to a newly mounted header
+  -- after its geometry is committed, before the next queued keystroke.
+  ctx.use_effect(function()
+    finish_jump(viewport)
+  end)
+  local children, sequences = {}, {}
+  if first == 1 then
+    children[1] = { comp = ui.text, props = { text = status, style = { text_hl = "Comment" } } }
+    sequences[1] = 1
+  end
+  for index = math.max(first, 2), last do
+    local cell = store.cells[index - 1]
+    sequences[#sequences + 1] = index
     children[#children + 1] = {
       comp = cell.type == "code" and CodeCell or MarkdownCell,
       -- keyed by cell id: inserts and moves must MOVE this fiber (keeping
@@ -766,7 +796,10 @@ function M.Notebook(ctx, props)
     comp = ui.col,
     props = {
       grow = 1,
-      gap = 1,
+      gap = viewport.gap,
+      content_visibility = "auto",
+      visibility = viewport,
+      sequences = sequences,
       style = { padding = { x = 1 } },
       -- page-wide chords: on_key routes to the nearest carrier under the
       -- cursor and nothing deeper carries prefix-p, so this fires anywhere

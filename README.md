@@ -182,10 +182,22 @@ selection, `<CR>`/`<C-y>` apply it — a pick switches the live notebook like
 choice). Once the notebook's server has booted, its `/api/kernelspecs`
 listing fills the kernel dropdown; before that the field is free text (type
 any kernelspec name). **+ new connection…** runs the guided creation flow.
-At the panel root, `<Esc>` toggles widget mode and `q` closes the window.
+In a focused Fibrous window, `<leader>w` toggles widget navigation across Fibrous views. Press `q` at the panel root to close the window.
 Outside a notebook the window sets the global default connection and has no
 kernel field. Programmatically: `notebook_file.set_kernel(bufnr, name)` /
 `notebook_file.kernel_of(bufnr)`.
+
+### Scrolling large notebooks
+
+Perijove renders the cells in the viewport and two screenfuls on either side.
+Scroll normally with `<C-d>`, `<C-u>`, `gg`, or `G`. Visited cell buffers keep
+their edits and undo history as you scroll. Offscreen cells keep receiving
+kernel output, which appears when you return.
+
+Vim search and yanks in the rendered notebook see only the cells currently
+painted. Use `<C-j>t` to search the full notebook in its raw JSON. Each visible
+cell renders its entire expanded output, so one very large output can still
+slow down scrolling. Use `<C-j>c` on that cell to fold it.
 
 ### Notebook LSP
 
