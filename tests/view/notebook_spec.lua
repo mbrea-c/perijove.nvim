@@ -558,7 +558,17 @@ describe("view.notebook", function()
     local st = new_pair()
     st:insert_cell(1, { type = "markdown", source = "alpha one\n\nbravo two\n\ncharlie three" })
     local handle = mount_nb(st)
-    press_at(handle, "charlie", "<CR>")
+    -- With a free cursor the third paragraph can be selected inside the cell.
+    local mode = require("fibrous.inline.widget_mode")
+    local enabled = mode.enabled
+    if enabled then
+      mode.toggle()
+    end
+    local ok, err = pcall(press_at, handle, "charlie", "<CR>")
+    if enabled then
+      mode.toggle()
+    end
+    assert(ok, err)
     vim.wait(50)
     local win = vim.api.nvim_get_current_win()
     assert.truthy(vim.api.nvim_win_get_buf(win) ~= handle.bufnr)
