@@ -155,9 +155,7 @@ function M.open(opts)
     backdrop = true,
   })
 
-  for _, lhs in ipairs({ "q", "<Esc>" }) do
-    vim.keymap.set("n", lhs, close, { buffer = app.bufnr, nowait = true, desc = "perijove: close config window" })
-  end
+  vim.keymap.set("n", "q", close, { buffer = app.bufnr, nowait = true, desc = "perijove: close config window" })
   app.focus()
 
   return {

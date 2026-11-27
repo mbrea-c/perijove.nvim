@@ -180,6 +180,8 @@ describe("view.config_window", function()
     press("<CR>")
     assert.equal(1, calls.new)
 
+    press("<Esc>")
+    assert.is_true(handle.is_open())
     press("q")
     assert.is_false(handle.is_open())
     assert.is_false(vim.api.nvim_win_is_valid(handle.winid))

@@ -182,6 +182,7 @@ selection, `<CR>`/`<C-y>` apply it — a pick switches the live notebook like
 choice). Once the notebook's server has booted, its `/api/kernelspecs`
 listing fills the kernel dropdown; before that the field is free text (type
 any kernelspec name). **+ new connection…** runs the guided creation flow.
+At the panel root, `<Esc>` toggles widget mode and `q` closes the window.
 Outside a notebook the window sets the global default connection and has no
 kernel field. Programmatically: `notebook_file.set_kernel(bufnr, name)` /
 `notebook_file.kernel_of(bufnr)`.
